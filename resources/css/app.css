@@ -1,0 +1,19 @@
+@import 'tailwindcss';
+@import './components.css';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+
+    --color-primary: #4e73f8;
+    --color-primary-content: #ffffff;
+    --color-sidebar: #2b2b40;
+    --color-sidebar-active: #363a54;
+    --color-surface: #ffffff;
+    --color-app: #f4f5f9;
+    --color-input: #eef0f7;
+    --color-success: #1bc943;
+}
