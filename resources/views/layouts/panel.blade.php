@@ -23,7 +23,7 @@
                         Panel
                     </a>
 
-                    @if (auth()->user()->esGth())
+                    @if (auth()->user()->esGth() || auth()->user()->esAdmin())
                         <a href="{{ route('proceso-reclutamiento') }}" class="sidebar-item {{ request()->routeIs('proceso-reclutamiento') ? 'sidebar-item-active' : '' }}">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM12.75 11.25h.01M6.75 8.25h5.25m-5.25 4.5h9m-9 4.5h9M4.5 4.5h15a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18V6a1.5 1.5 0 011.5-1.5z" />

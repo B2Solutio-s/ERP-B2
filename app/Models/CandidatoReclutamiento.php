@@ -12,7 +12,11 @@ class CandidatoReclutamiento extends Model
         'fecha_gestion',
         'fecha_nacimiento',
         'fecha_entrevista',
-        'fecha_capacitacion',
+        'fecha_reprogramada',
+        'capacitacion_1',
+        'capacitacion_1_reprogramada',
+        'capacitacion_2',
+        'capacitacion_2_reprogramada',
         'fecha_ingreso',
     ];
 
@@ -29,6 +33,7 @@ class CandidatoReclutamiento extends Model
         'fecha_nacimiento',
         'edad',
         'nombres',
+        'apellidos',
         'numero_celular',
         'distrito',
         'experiencia',
@@ -40,9 +45,23 @@ class CandidatoReclutamiento extends Model
         'fecha_entrevista',
         'hora_entrevista',
         'asistio_entrevista',
-        'fecha_capacitacion',
+        'fecha_reprogramada',
+        'asistio_entrevista_reprogramada',
+        'capacitacion_1',
+        'asistio_cap_1',
+        'obs_1',
+        'capacitacion_1_reprogramada',
+        'asistio_cap_1_reprogramada',
+        'obs_1_reprogramada',
+        'capacitacion_2',
+        'asistio_cap_2',
+        'obs_2',
+        'capacitacion_2_reprogramada',
+        'asistio_cap_2_reprogramada',
+        'obs_2_reprogramada',
+        'apto',
+        'fecha_apto',
         'fecha_ingreso',
-        'entrego_documentos',
         'bloqueado_por_id',
         'bloqueado_hasta',
     ];
@@ -51,8 +70,14 @@ class CandidatoReclutamiento extends Model
         'fecha_gestion' => 'date',
         'fecha_nacimiento' => 'date',
         'fecha_entrevista' => 'date',
-        'fecha_capacitacion' => 'date',
+        'fecha_reprogramada' => 'date',
+        'capacitacion_1' => 'date',
+        'capacitacion_1_reprogramada' => 'date',
+        'capacitacion_2' => 'date',
+        'capacitacion_2_reprogramada' => 'date',
         'fecha_ingreso' => 'date',
+        'apto' => 'boolean',
+        'fecha_apto' => 'datetime',
         'bloqueado_hasta' => 'datetime',
     ];
 
@@ -63,6 +88,22 @@ class CandidatoReclutamiento extends Model
         }
 
         parent::setAttribute($key, $value);
+    }
+
+    public function nombreCompleto(): string
+    {
+        return trim("{$this->nombres} {$this->apellidos}");
+    }
+
+    public function nombreCorto(): string
+    {
+        $nombre = trim((string) $this->nombres);
+        $apellido = trim((string) $this->apellidos);
+
+        $primerNombre = explode(' ', $nombre)[0] ?? '';
+        $primerApellido = explode(' ', $apellido)[0] ?? '';
+
+        return trim("{$primerNombre} {$primerApellido}");
     }
 
     public function findDuplicateByIdentity(): ?self
@@ -98,5 +139,10 @@ class CandidatoReclutamiento extends Model
     public function bloqueadoPor()
     {
         return $this->belongsTo(User::class, 'bloqueado_por_id');
+    }
+
+    public function invitacionesOnboarding()
+    {
+        return $this->hasMany(OnboardingInvitation::class, 'reclutamiento_candidato_id');
     }
 }

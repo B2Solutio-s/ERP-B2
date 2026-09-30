@@ -234,4 +234,91 @@
     .wizard-tab-circle-done {
         @apply border-success bg-success text-white;
     }
+
+    .reclutamiento-tabs {
+        @apply flex flex-wrap gap-1 border-b border-slate-200;
+    }
+
+    .reclutamiento-tab {
+        @apply -mb-px rounded-t-lg border border-transparent border-b-0 px-4 py-2 text-sm font-medium text-slate-500 transition hover:text-slate-700;
+    }
+
+    .reclutamiento-tab.is-active {
+        @apply border-slate-200 border-b-white bg-white text-primary;
+    }
+
+    .reclutamiento-row-graduated {
+        @apply bg-sky-50;
+        box-shadow: inset 4px 0 0 rgb(14 165 233);
+    }
+
+    .reclutamiento-row-graduated input,
+    .reclutamiento-row-graduated select {
+        @apply cursor-not-allowed bg-sky-50/70 text-sky-950;
+    }
+
+    .reclutamiento-graduated-badge {
+        @apply inline-flex items-center rounded-full bg-sky-500 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm;
+    }
+
+    .reclutamiento-filter-bar {
+        @apply flex flex-wrap items-center gap-2;
+    }
+
+    .reclutamiento-filter-chip {
+        @apply relative inline-flex;
+    }
+
+    .reclutamiento-filter-chip-button {
+        @apply inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-slate-300;
+    }
+
+    .reclutamiento-filter-chip-button.is-active {
+        @apply border-primary/40 bg-primary/10 text-primary;
+    }
+
+    .reclutamiento-filter-chip-count {
+        @apply inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-content;
+    }
+
+    .reclutamiento-filter-popover {
+        @apply absolute left-0 top-full z-40 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 shadow-xl;
+    }
+
+    .reclutamiento-filter-popover-search {
+        @apply mb-2 w-full rounded-lg border border-transparent bg-input px-2.5 py-1.5 text-xs text-slate-700 outline-none;
+    }
+
+    .reclutamiento-filter-popover-list {
+        @apply max-h-48 space-y-1 overflow-y-auto;
+    }
+
+    .reclutamiento-filter-popover-option {
+        @apply flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 hover:bg-slate-50;
+    }
+
+    .reclutamiento-invitacion-popover {
+        @apply fixed z-[80] hidden w-64 rounded-xl border border-slate-200 bg-white p-4 text-center shadow-2xl;
+    }
+
+    .reclutamiento-invitacion-popover.is-visible {
+        @apply block;
+    }
+
+    .reclutamiento-info-badge {
+        @apply relative inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full bg-sky-100 text-sky-600;
+    }
+
+    .reclutamiento-info-badge:hover .reclutamiento-lock-tooltip,
+    .reclutamiento-info-badge:focus-visible .reclutamiento-lock-tooltip {
+        @apply block;
+    }
+
+    .reclutamiento-capacitacion-row {
+        @apply border-b border-slate-200;
+    }
+
+    .reclutamiento-capacitacion-panel {
+        @apply grid gap-4 bg-slate-50 p-4 sm:grid-cols-2;
+    }
 }

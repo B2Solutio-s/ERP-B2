@@ -4,8 +4,29 @@ const FIELD_KEYS = [
     'mes', 'fecha_gestion', 'agente_reclutador', 'campana', 'dni_ce', 'edad', 'nombres',
     'numero_celular', 'distrito', 'observaciones', 'tipificacion', 'subtipificacion_rechazo',
     'aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista',
-    'fecha_capacitacion', 'entrego_documentos',
+    'fecha_reprogramada', 'asistio_entrevista_reprogramada',
 ];
+
+const FIELD_LABELS = {
+    mes: 'Mes',
+    fecha_gestion: 'Fecha gestión',
+    agente_reclutador: 'Agente reclutador',
+    campana: 'Campaña',
+    dni_ce: 'DNI / C.E',
+    edad: 'Edad',
+    nombres: 'Nombres y apellidos',
+    numero_celular: 'Número celular',
+    distrito: 'Distrito',
+    observaciones: 'Observaciones',
+    tipificacion: 'Tipificación',
+    subtipificacion_rechazo: 'Subtipificación rechazo',
+    aceptacion_entrevista: 'Aceptación entrevista',
+    fecha_entrevista: 'Fecha entrevista',
+    hora_entrevista: 'Hora de entrevista',
+    asistio_entrevista: 'Asistió entrevista',
+    fecha_reprogramada: 'Fecha reprogramada',
+    asistio_entrevista_reprogramada: 'Asistió ent. Rep',
+};
 
 const MONTHS = [
     'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
@@ -25,35 +46,40 @@ const DISTRICTS = [
 
 const TEXT_FIELDS = new Set([
     'agente_reclutador', 'campana', 'dni_ce', 'nombres', 'numero_celular', 'distrito',
-    'observaciones', 'tipificacion', 'subtipificacion_rechazo', 'entrego_documentos',
+    'observaciones', 'tipificacion', 'subtipificacion_rechazo',
 ]);
+
+const SELECT_FIELDS = new Set([
+    'mes', 'campana', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
+    'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
+]);
+
+const FILTERABLE_COLUMNS = FIELD_KEYS.filter((key) => key !== 'observaciones');
 
 const DEFAULT_MINIMUM_COLUMN_WIDTHS = {
     mes: 140,
 };
 
-const getCampanas = () => {
-    const element = document.getElementById('reclutamiento-campanas');
-    if (!element) return [];
+const getJsonScript = (id, fallback) => {
+    const element = document.getElementById(id);
+    if (!element) return fallback;
 
     try {
-        const values = JSON.parse(element.textContent || '[]');
-        return Array.isArray(values) ? values.filter(Boolean).map((value) => String(value).toUpperCase()) : [];
+        const parsed = JSON.parse(element.textContent || 'null');
+        return parsed === null ? fallback : parsed;
     } catch {
-        return [];
+        return fallback;
     }
 };
 
-const getCurrentUser = () => {
-    const element = document.getElementById('reclutamiento-usuario');
-    if (!element) return { id: null, nombre: '' };
+const getCampanas = () => getJsonScript('reclutamiento-campanas', []).filter(Boolean).map((value) => String(value).toUpperCase());
+const getTipificacionOptions = () => getJsonScript('reclutamiento-tipificacion-options', ['INTERESADO - APTO', 'NO INTERESADO', 'NO PASA FILTRO', 'NO CONTESTA']);
+const getSubtipificacionOptions = () => getJsonScript('reclutamiento-subtipificacion-options', ['NO CONTESTA', 'NO TIENE EXPERIENCIA', 'NO CALIFICA']);
+const getAsistioOptions = () => getJsonScript('reclutamiento-asistio-options', ['SI, APTO', 'SI, NO APTO', 'NO', 'REPROGRAMADO']);
 
-    try {
-        return JSON.parse(element.textContent || '{}');
-    } catch {
-        return { id: null, nombre: '' };
-    }
-};
+const SUBTIPIFICACION_ENABLED_WHEN = new Set(['NO INTERESADO', 'NO PASA FILTRO']);
+
+const getCurrentUser = () => getJsonScript('reclutamiento-usuario', { id: null, nombre: '' });
 
 const isPersistedRow = (row) => row.id && /^\d+$/.test(String(row.id));
 
@@ -97,6 +123,7 @@ const clearRowDirty = (rowId) => {
 const setRowLockState = (rowId, locked, userName = '', ownerId = null) => {
     const row = document.querySelector(`tr[data-candidato-id="${rowId}"]`);
     if (!row) return;
+    if (row.dataset.graduated === 'true') return;
 
     const currentUser = getCurrentUser();
     const belongsToCurrentUser = ownerId !== null
@@ -113,10 +140,7 @@ const setRowLockState = (rowId, locked, userName = '', ownerId = null) => {
 
     const removeButton = row.querySelector('[data-remove-row]');
     if (removeButton) {
-        removeButton.disabled = shouldLock;
-        removeButton.title = shouldLock
-            ? `No disponible: ${userName || 'otro usuario'} está editando esta fila`
-            : 'Eliminar candidato';
+        removeButton.disabled = shouldLock || isPersistedRow({ id: rowId });
     }
 
     const status = row.querySelector('[data-lock-status]');
@@ -132,6 +156,8 @@ const setRowLockState = (rowId, locked, userName = '', ownerId = null) => {
     if (!shouldLock && window.__reclutamientoLockTooltipRowId === String(rowId)) {
         window.__reclutamientoHideLockTooltip?.();
     }
+
+    applyConditionalFieldLocks(row);
 };
 
 window.__reclutamientoNotify = (message, tone = 'info') => {
@@ -149,6 +175,9 @@ const setupLockNotifications = () => {
     window.addEventListener('fila-bloqueada', (event) => {
         const { filaId, bloqueada, usuario } = event.detail || {};
         if (filaId) setRowLockState(filaId, Boolean(bloqueada), usuario || 'otro usuario');
+    });
+    window.addEventListener('fila-eliminacion-denegada', () => {
+        window.__reclutamientoNotify?.('No es posible eliminar candidatos ya guardados.', 'warning');
     });
 };
 
@@ -275,17 +304,7 @@ const mountRowsFromStorage = () => {
         const parsed = JSON.parse(raw.textContent || '[]');
         if (Array.isArray(parsed)) {
             const rows = serializeRows(parsed);
-            const hasPersistedRows = rows.some((row) => isPersistedRow(row));
-
-            if (hasPersistedRows) {
-                return rows;
-            }
-
-            if (rows.length) {
-                return rows;
-            }
-
-            return fallbackRows;
+            return rows;
         }
     } catch {
         // no-op
@@ -295,12 +314,12 @@ const mountRowsFromStorage = () => {
 };
 
 const createCell = (key, value = '') => {
-    const selectFields = new Set(['mes', 'campana', 'distrito', 'aceptacion_entrevista', 'asistio_entrevista']);
-    const cell = document.createElement(selectFields.has(key) ? 'select' : 'input');
+    const cell = document.createElement(SELECT_FIELDS.has(key) ? 'select' : 'input');
+    cell.dataset.field = key;
     cell.value = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
     cell.className = 'w-full border-0 bg-transparent px-2 py-2 text-sm text-slate-700 outline-none';
 
-    if (selectFields.has(key)) {
+    if (SELECT_FIELDS.has(key)) {
         const emptyOption = document.createElement('option');
         emptyOption.value = '';
         emptyOption.textContent = 'Seleccionar';
@@ -312,7 +331,13 @@ const createCell = (key, value = '') => {
                 ? getCampanas()
                 : key === 'distrito'
                     ? DISTRICTS
-                    : ['SI', 'NO'];
+                    : key === 'tipificacion'
+                        ? getTipificacionOptions()
+                        : key === 'subtipificacion_rechazo'
+                            ? getSubtipificacionOptions()
+                            : key === 'asistio_entrevista' || key === 'asistio_entrevista_reprogramada'
+                                ? getAsistioOptions()
+                                : ['SI', 'NO'];
 
         const normalizedValue = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
         const availableOptions = options.includes(normalizedValue) || !normalizedValue
@@ -330,9 +355,9 @@ const createCell = (key, value = '') => {
     } else {
         cell.type = key === 'edad'
             ? 'number'
-            : ['fecha_gestion', 'fecha_entrevista', 'fecha_capacitacion'].includes(key)
-            ? 'date'
-            : key === 'hora_entrevista' ? 'time' : 'text';
+            : ['fecha_gestion', 'fecha_entrevista', 'fecha_reprogramada'].includes(key)
+                ? 'date'
+                : key === 'hora_entrevista' ? 'time' : 'text';
 
         if (key === 'edad') {
             cell.min = '0';
@@ -343,6 +368,47 @@ const createCell = (key, value = '') => {
     }
 
     return cell;
+};
+
+const applyConditionalFieldLocks = (rowElement) => {
+    if (!rowElement) return;
+
+    const graduated = rowElement.dataset.graduated === 'true';
+    const rowLocked = rowElement.dataset.locked === 'true';
+
+    const fieldAt = (key) => rowElement.querySelector(`[data-field="${key}"]`);
+
+    if (graduated) {
+        rowElement.classList.add('reclutamiento-row-graduated');
+        rowElement.querySelectorAll('input, select').forEach((field) => { field.disabled = true; });
+        const removeButton = rowElement.querySelector('[data-remove-row]');
+        if (removeButton) removeButton.disabled = true;
+        return;
+    }
+
+    rowElement.classList.remove('reclutamiento-row-graduated');
+
+    const tipificacion = fieldAt('tipificacion');
+    const subtipificacion = fieldAt('subtipificacion_rechazo');
+    if (tipificacion && subtipificacion && !rowLocked) {
+        const enabled = SUBTIPIFICACION_ENABLED_WHEN.has(tipificacion.value);
+        subtipificacion.disabled = !enabled;
+        if (!enabled && subtipificacion.value !== '') {
+            subtipificacion.value = '';
+        }
+    }
+
+    const asistio = fieldAt('asistio_entrevista');
+    const fechaReprogramada = fieldAt('fecha_reprogramada');
+    const asistioReprogramada = fieldAt('asistio_entrevista_reprogramada');
+    if (asistio && !rowLocked) {
+        const enabled = asistio.value === 'REPROGRAMADO';
+        [fechaReprogramada, asistioReprogramada].forEach((field) => {
+            if (!field) return;
+            field.disabled = !enabled;
+            if (!enabled && field.value !== '') field.value = '';
+        });
+    }
 };
 
 const bindInput = (row, key, input, hiddenInput, rows) => {
@@ -365,8 +431,20 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
         if (key === 'fecha_gestion') {
             const month = getMonthFromDate(input.value);
             row.mes = month;
-            const monthField = input.closest('tr')?.children[FIELD_KEYS.indexOf('mes')]?.querySelector('select');
+            const monthField = input.closest('tr')?.querySelector('[data-field="mes"]');
             if (monthField) monthField.value = month;
+        }
+
+        if (key === 'tipificacion' || key === 'asistio_entrevista') {
+            applyConditionalFieldLocks(input.closest('tr'));
+            const tr = input.closest('tr');
+            if (key === 'tipificacion') {
+                row.subtipificacion_rechazo = tr?.querySelector('[data-field="subtipificacion_rechazo"]')?.value || '';
+            }
+            if (key === 'asistio_entrevista') {
+                row.fecha_reprogramada = tr?.querySelector('[data-field="fecha_reprogramada"]')?.value || '';
+                row.asistio_entrevista_reprogramada = tr?.querySelector('[data-field="asistio_entrevista_reprogramada"]')?.value || '';
+            }
         }
 
         syncHiddenInput(rows, hiddenInput);
@@ -489,16 +567,380 @@ const normalizeForSearch = (value) => String(value ?? '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '');
 
+// ---------------------------------------------------------------------
+// Filtros en chips ("Gestión de candidatos")
+// ---------------------------------------------------------------------
+
+window.__reclutamientoFiltros = window.__reclutamientoFiltros || [];
+
+const closeAllFilterPopovers = () => {
+    document.querySelectorAll('.reclutamiento-filter-popover').forEach((popover) => popover.remove());
+    document.querySelectorAll('.reclutamiento-filter-chip-button.is-open').forEach((btn) => btn.classList.remove('is-open'));
+};
+
+const setupFilterPopoverDismissal = () => {
+    if (window.__reclutamientoFilterDismissalReady) return;
+    window.__reclutamientoFilterDismissalReady = true;
+
+    document.addEventListener('click', (event) => {
+        if (event.target.closest('.reclutamiento-filter-chip')) return;
+        closeAllFilterPopovers();
+    });
+};
+
+const createFilterIcon = () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.classList.add('h-3.5', 'w-3.5');
+    svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M6 6h12M9 12h6M11 18h2" />';
+    return svg;
+};
+
+const isSelectColumn = (column) => SELECT_FIELDS.has(column) && column !== 'campana' && column !== 'distrito'
+    ? true
+    : ['campana', 'distrito'].includes(column);
+
+const isDateColumn = (column) => ['fecha_gestion', 'fecha_entrevista', 'fecha_reprogramada'].includes(column);
+
+const getColumnOptionValues = (rows, column) => {
+    if (column === 'mes') return MONTHS;
+    if (column === 'campana') return getCampanas();
+    if (column === 'distrito') return DISTRICTS;
+    if (column === 'tipificacion') return getTipificacionOptions();
+    if (column === 'subtipificacion_rechazo') return getSubtipificacionOptions();
+    if (column === 'asistio_entrevista' || column === 'asistio_entrevista_reprogramada') return getAsistioOptions();
+    if (column === 'aceptacion_entrevista') return ['SI', 'NO'];
+
+    const values = new Set();
+    rows.forEach((row) => {
+        const value = String(row[column] ?? '').trim();
+        if (value) values.add(value.toUpperCase());
+    });
+    return [...values].sort();
+};
+
+const buildSelectFilterBody = (popover, filtro, rows, onChange) => {
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.placeholder = 'Buscar...';
+    search.className = 'reclutamiento-filter-popover-search';
+    popover.appendChild(search);
+
+    const list = document.createElement('div');
+    list.className = 'reclutamiento-filter-popover-list';
+    popover.appendChild(list);
+
+    const options = getColumnOptionValues(rows, filtro.column);
+
+    const renderOptions = (term = '') => {
+        list.innerHTML = '';
+        options
+            .filter((option) => option.toUpperCase().includes(term.toUpperCase()))
+            .forEach((option) => {
+                const label = document.createElement('label');
+                label.className = 'reclutamiento-filter-popover-option';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = filtro.values.includes(option);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        filtro.values.push(option);
+                    } else {
+                        filtro.values = filtro.values.filter((value) => value !== option);
+                    }
+                    onChange();
+                });
+                label.appendChild(checkbox);
+                label.append(option);
+                list.appendChild(label);
+            });
+    };
+
+    search.addEventListener('input', () => renderOptions(search.value));
+    renderOptions();
+};
+
+const buildSingleValueFilterBody = (popover, filtro, onChange) => {
+    if (isDateColumn(filtro.column)) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'space-y-2';
+
+        const desde = document.createElement('input');
+        desde.type = 'date';
+        desde.className = 'reclutamiento-filter-popover-search';
+        desde.value = filtro.desde || '';
+        desde.addEventListener('change', () => { filtro.desde = desde.value; onChange(); });
+
+        const hasta = document.createElement('input');
+        hasta.type = 'date';
+        hasta.className = 'reclutamiento-filter-popover-search';
+        hasta.value = filtro.hasta || '';
+        hasta.addEventListener('change', () => { filtro.hasta = hasta.value; onChange(); });
+
+        wrapper.appendChild(desde);
+        wrapper.appendChild(hasta);
+        popover.appendChild(wrapper);
+        return;
+    }
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'reclutamiento-filter-popover-search';
+    input.value = filtro.texto || '';
+    input.placeholder = 'Buscar...';
+    input.addEventListener('input', () => { filtro.texto = input.value; onChange(); });
+    popover.appendChild(input);
+};
+
+const filterMatchesRow = (filtro, row) => {
+    const rawValue = row[filtro.column];
+
+    if (isDateColumn(filtro.column)) {
+        if (!filtro.desde && !filtro.hasta) return true;
+        if (!rawValue) return false;
+        if (filtro.desde && rawValue < filtro.desde) return false;
+        if (filtro.hasta && rawValue > filtro.hasta) return false;
+        return true;
+    }
+
+    if (filtro.values) {
+        if (!filtro.values.length) return true;
+        return filtro.values.includes(String(rawValue ?? '').toUpperCase());
+    }
+
+    if (!filtro.texto) return true;
+    return normalizeForSearch(rawValue).includes(normalizeForSearch(filtro.texto).trim());
+};
+
 const applyRowFilter = (rows, tbody) => {
-    const column = document.getElementById('reclutamiento-filtro-columna')?.value || '';
-    const term = normalizeForSearch(document.getElementById('reclutamiento-filtro-texto')?.value || '').trim();
+    const filtros = window.__reclutamientoFiltros;
 
     rows.forEach((row) => {
         const rowElement = tbody.querySelector(`tr[data-candidato-id="${row.id}"]`);
         if (!rowElement) return;
 
-        const matches = !term || !column || normalizeForSearch(row[column]).includes(term);
+        const matches = filtros.every((filtro) => filterMatchesRow(filtro, row));
         rowElement.classList.toggle('hidden', !matches);
+    });
+};
+
+const createFilterChip = (filtro, rows, tbody, container, onRemove) => {
+    const chip = document.createElement('div');
+    chip.className = 'reclutamiento-filter-chip';
+    chip.dataset.filterChip = 'true';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'reclutamiento-filter-chip-button';
+    chip.appendChild(button);
+
+    const renderButtonLabel = () => {
+        button.innerHTML = '';
+        button.appendChild(createFilterIcon());
+        const label = document.createElement('span');
+        label.textContent = FIELD_LABELS[filtro.column] || filtro.column;
+        button.appendChild(label);
+
+        const count = filtro.values ? filtro.values.length : (filtro.texto || filtro.desde || filtro.hasta) ? 1 : 0;
+        if (count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'reclutamiento-filter-chip-count';
+            badge.textContent = filtro.values ? String(count) : '1';
+            button.appendChild(badge);
+        }
+        button.classList.toggle('is-active', count > 0);
+    };
+
+    const openPopover = () => {
+        closeAllFilterPopovers();
+        button.classList.add('is-open');
+
+        const popover = document.createElement('div');
+        popover.className = 'reclutamiento-filter-popover';
+
+        const onChange = () => {
+            renderButtonLabel();
+            applyRowFilter(rows, tbody);
+        };
+
+        if (isSelectColumn(filtro.column) || SELECT_FIELDS.has(filtro.column)) {
+            filtro.values = filtro.values || [];
+            buildSelectFilterBody(popover, filtro, rows, onChange);
+        } else {
+            buildSingleValueFilterBody(popover, filtro, onChange);
+        }
+
+        const removeLink = document.createElement('button');
+        removeLink.type = 'button';
+        removeLink.className = 'mt-2 text-xs font-medium text-rose-600';
+        removeLink.textContent = 'Quitar filtro';
+        removeLink.addEventListener('click', () => {
+            closeAllFilterPopovers();
+            onRemove();
+        });
+        popover.appendChild(removeLink);
+
+        chip.appendChild(popover);
+    };
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (button.classList.contains('is-open')) {
+            closeAllFilterPopovers();
+            return;
+        }
+        openPopover();
+    });
+
+    renderButtonLabel();
+    container.appendChild(chip);
+    return chip;
+};
+
+const createAddFilterChip = (rows, tbody, container, filtros, renderAll) => {
+    const chip = document.createElement('div');
+    chip.className = 'reclutamiento-filter-chip';
+    chip.dataset.filterChip = 'true';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'reclutamiento-filter-chip-button';
+    button.innerHTML = '<span>+ Añadir filtro</span>';
+    chip.appendChild(button);
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (button.classList.contains('is-open')) {
+            closeAllFilterPopovers();
+            return;
+        }
+
+        closeAllFilterPopovers();
+        button.classList.add('is-open');
+
+        const popover = document.createElement('div');
+        popover.className = 'reclutamiento-filter-popover';
+
+        const search = document.createElement('input');
+        search.type = 'text';
+        search.placeholder = 'Buscar columna...';
+        search.className = 'reclutamiento-filter-popover-search';
+        popover.appendChild(search);
+
+        const list = document.createElement('div');
+        list.className = 'reclutamiento-filter-popover-list';
+        popover.appendChild(list);
+
+        const renderList = (term = '') => {
+            list.innerHTML = '';
+            FILTERABLE_COLUMNS
+                .filter((column) => !filtros.some((filtro) => filtro.column === column))
+                .filter((column) => (FIELD_LABELS[column] || column).toUpperCase().includes(term.toUpperCase()))
+                .forEach((column) => {
+                    const option = document.createElement('button');
+                    option.type = 'button';
+                    option.className = 'reclutamiento-filter-popover-option w-full text-left';
+                    option.textContent = FIELD_LABELS[column] || column;
+                    option.addEventListener('click', () => {
+                        filtros.push({ column, values: [], texto: '', desde: '', hasta: '' });
+                        closeAllFilterPopovers();
+                        renderAll();
+                    });
+                    list.appendChild(option);
+                });
+        };
+
+        search.addEventListener('input', () => renderList(search.value));
+        renderList();
+        chip.appendChild(popover);
+    });
+
+    container.appendChild(chip);
+};
+
+const renderFilterBar = (containerId, rows, tbody, filtros) => {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    filtros.forEach((filtro, index) => {
+        createFilterChip(filtro, rows, tbody, container, () => {
+            filtros.splice(index, 1);
+            renderFilterBar(containerId, rows, tbody, filtros);
+            applyRowFilter(rows, tbody);
+        });
+    });
+
+    createAddFilterChip(rows, tbody, container, filtros, () => renderFilterBar(containerId, rows, tbody, filtros));
+
+    if (filtros.length) {
+        const clearButton = document.createElement('button');
+        clearButton.type = 'button';
+        clearButton.className = 'text-xs font-medium text-rose-600';
+        clearButton.textContent = 'Limpiar filtros';
+        clearButton.addEventListener('click', () => {
+            filtros.splice(0, filtros.length);
+            renderFilterBar(containerId, rows, tbody, filtros);
+            applyRowFilter(rows, tbody);
+        });
+        container.appendChild(clearButton);
+    }
+};
+
+const initReclutamientoFiltros = (rows, tbody) => {
+    setupFilterPopoverDismissal();
+    ['reclutamiento-filtros', 'reclutamiento-filtros-ampliada'].forEach((id) => {
+        renderFilterBar(id, rows, tbody, window.__reclutamientoFiltros);
+    });
+};
+
+// ---------------------------------------------------------------------
+// Popover de invitación (QR + link)
+// ---------------------------------------------------------------------
+
+const setupInvitacionPopover = () => {
+    if (window.__reclutamientoInvitacionPopoverReady) return;
+    window.__reclutamientoInvitacionPopoverReady = true;
+
+    const popover = document.getElementById('reclutamiento-invitacion-popover');
+    if (!popover) return;
+
+    const closePopover = () => popover.classList.remove('is-visible');
+
+    document.addEventListener('click', (event) => {
+        const trigger = event.target.closest('[data-invitacion-toggle]');
+        if (!trigger) {
+            if (!event.target.closest('#reclutamiento-invitacion-popover')) closePopover();
+            return;
+        }
+
+        const link = trigger.dataset.invitacionLink;
+        const estado = trigger.dataset.invitacionEstado || '';
+
+        popover.innerHTML = `
+            <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Invitación ${estado}</p>
+            <div class="mb-3 flex justify-center" data-qr></div>
+            <input type="text" readonly value="${link}" class="form-input mb-2 text-xs" onclick="this.select()">
+            <button type="button" class="btn-secondary w-full" data-copy>Copiar link</button>
+        `;
+
+        const rect = trigger.getBoundingClientRect();
+        popover.style.left = `${Math.min(rect.left, window.innerWidth - 280)}px`;
+        popover.style.top = `${rect.bottom + 8}px`;
+        popover.classList.add('is-visible');
+
+        popover.querySelector('[data-copy]')?.addEventListener('click', () => {
+            navigator.clipboard?.writeText(link);
+            window.__reclutamientoNotify?.('Link copiado al portapapeles.');
+        });
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closePopover();
     });
 };
 
@@ -509,6 +951,7 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         const tr = document.createElement('tr');
         tr.className = 'border-b border-slate-200 align-top';
         tr.dataset.candidatoId = row.id;
+        tr.dataset.graduated = row.graduado ? 'true' : 'false';
 
         FIELD_KEYS.forEach((key) => {
             const td = document.createElement('td');
@@ -528,8 +971,9 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         removeButton.type = 'button';
         removeButton.dataset.removeRow = 'true';
         removeButton.setAttribute('aria-label', 'Eliminar candidato');
-        removeButton.title = 'Eliminar candidato';
-        removeButton.className = 'inline-flex h-8 w-8 items-center justify-center rounded bg-rose-50 text-rose-600 transition hover:bg-rose-100';
+        removeButton.title = isPersistedRow(row) ? 'No se pueden eliminar candidatos ya guardados' : 'Eliminar candidato';
+        removeButton.disabled = isPersistedRow(row);
+        removeButton.className = 'inline-flex h-8 w-8 items-center justify-center rounded bg-rose-50 text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40';
         removeButton.innerHTML = `
             <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 6h18" />
@@ -541,20 +985,16 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         `;
         removeButton.addEventListener('click', () => {
             if (removeButton.disabled || tr.dataset.locked === 'true') {
-                window.__reclutamientoNotify?.('Esta fila está siendo editada por otro usuario.', 'warning');
+                if (isPersistedRow(row)) {
+                    window.__reclutamientoNotify?.('No es posible eliminar candidatos ya guardados.', 'warning');
+                } else {
+                    window.__reclutamientoNotify?.('Esta fila está siendo editada por otro usuario.', 'warning');
+                }
                 return;
             }
 
             const index = rows.indexOf(row);
             if (index < 0) return;
-
-            const persisted = isPersistedRow(row);
-            if (persisted) {
-                const timer = window.__reclutamientoSaveTimers?.get(String(row.id));
-                if (timer) window.clearTimeout(timer);
-                window.__reclutamientoSaveTimers?.delete(String(row.id));
-                callLivewire('eliminarFila', Number(row.id));
-            }
 
             rows.splice(index, 1);
             renderTable(rows, tbody, hiddenInput, table);
@@ -562,6 +1002,14 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
             syncHiddenInput(rows, hiddenInput);
         });
         removeCell.appendChild(removeButton);
+
+        if (row.graduado) {
+            const badge = document.createElement('span');
+            badge.className = 'reclutamiento-graduated-badge mt-1 block w-fit';
+            badge.textContent = 'En capacitación';
+            removeCell.appendChild(badge);
+        }
+
         const lockStatus = document.createElement('span');
         lockStatus.dataset.lockStatus = 'true';
         lockStatus.className = 'reclutamiento-lock-indicator mt-1 hidden';
@@ -572,6 +1020,7 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         tbody.appendChild(tr);
 
         applyRowLockState(row);
+        applyConditionalFieldLocks(tr);
     });
 
     applyRowFilter(rows, tbody);
@@ -624,8 +1073,6 @@ const importExcel = (rows, tbody, hiddenInput, table, event) => {
                     fecha_entrevista: normalizeExcelDate(row['FECHA DE ENTREVISTA'] ?? row.fecha_entrevista ?? ''),
                     hora_entrevista: row['HORA DE ENTREVISTA'] ?? row.hora_entrevista ?? '',
                     asistio_entrevista: row['ASISTIÓ A ENTREVISTA'] ?? row.asistio_entrevista ?? '',
-                    fecha_capacitacion: normalizeExcelDate(row['FECHA DE CAPACITACIÓN'] ?? row.fecha_capacitacion ?? ''),
-                    entrego_documentos: row['ENTREGO DOCUMENTOS'] ?? row.entrego_documentos ?? '',
                 }))
                 .map((row) => ({
                     ...row,
@@ -709,6 +1156,8 @@ const initializeGrid = () => {
     const addButton = document.getElementById('agregar-candidato');
     const expandedAddButton = document.getElementById('agregar-candidato-ampliado');
 
+    setupInvitacionPopover();
+
     if (!table || !tbody || !hiddenInput) {
         return;
     }
@@ -723,6 +1172,7 @@ const initializeGrid = () => {
     setupColumnResizing(table);
     setupExpandedTable();
     syncHiddenInput(rows, hiddenInput);
+    initReclutamientoFiltros(rows, tbody);
 
     const addRow = () => {
         const newRow = normalizeRow();
@@ -741,32 +1191,6 @@ const initializeGrid = () => {
     expandedAddButton?.addEventListener('click', addRow);
 
     importar?.addEventListener('change', (event) => importExcel(rows, tbody, hiddenInput, table, event));
-
-    const filtroColumnaInputs = [
-        document.getElementById('reclutamiento-filtro-columna'),
-        document.getElementById('reclutamiento-filtro-columna-ampliada'),
-    ].filter(Boolean);
-    const filtroTextoInputs = [
-        document.getElementById('reclutamiento-filtro-texto'),
-        document.getElementById('reclutamiento-filtro-texto-ampliada'),
-    ].filter(Boolean);
-
-    const handleColumnFilterChange = (event) => {
-        filtroColumnaInputs.forEach((input) => {
-            if (input !== event.target) input.value = event.target.value;
-        });
-        applyRowFilter(rows, tbody);
-    };
-
-    const handleTextFilterChange = (event) => {
-        filtroTextoInputs.forEach((input) => {
-            if (input !== event.target) input.value = event.target.value;
-        });
-        applyRowFilter(rows, tbody);
-    };
-
-    filtroColumnaInputs.forEach((input) => input.addEventListener('change', handleColumnFilterChange));
-    filtroTextoInputs.forEach((input) => input.addEventListener('input', handleTextFilterChange));
 
     window.addEventListener('reclutamiento-guardado', () => {
         window.__reclutamientoDirty = false;
@@ -831,6 +1255,151 @@ const initializeGrid = () => {
     };
 };
 
+// ---------------------------------------------------------------------
+// Filtros en chips ("Proceso de capacitación")
+// ---------------------------------------------------------------------
+
+const CAPACITACION_FILTER_DEFS = [
+    { column: 'nombre', label: 'Nombre', type: 'text' },
+    { column: 'fecha_capacitacion', label: 'Fecha capacitación', type: 'range' },
+    { column: 'fecha_entrevista', label: 'Entrevista SI, APTO', type: 'range' },
+    { column: 'apto', label: 'Apto', type: 'radio', options: ['SI', 'NO'] },
+];
+
+const buildCapacitacionFiltrosPayload = (filtros) => ({
+    nombre: filtros.nombre?.texto || '',
+    fecha_capacitacion_desde: filtros.fecha_capacitacion?.desde || null,
+    fecha_capacitacion_hasta: filtros.fecha_capacitacion?.hasta || null,
+    fecha_entrevista_desde: filtros.fecha_entrevista?.desde || null,
+    fecha_entrevista_hasta: filtros.fecha_entrevista?.hasta || null,
+    apto: filtros.apto?.valor || null,
+});
+
+const createCapacitacionFilterChip = (def, filtro, container, onChange) => {
+    const chip = document.createElement('div');
+    chip.className = 'reclutamiento-filter-chip';
+    chip.dataset.filterChip = 'true';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'reclutamiento-filter-chip-button';
+    chip.appendChild(button);
+
+    const renderLabel = () => {
+        button.innerHTML = '';
+        button.appendChild(createFilterIcon());
+        const label = document.createElement('span');
+        label.textContent = def.label;
+        button.appendChild(label);
+        const active = Boolean(filtro.texto || filtro.desde || filtro.hasta || filtro.valor);
+        button.classList.toggle('is-active', active);
+    };
+
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (button.classList.contains('is-open')) {
+            closeAllFilterPopovers();
+            return;
+        }
+        closeAllFilterPopovers();
+        button.classList.add('is-open');
+
+        const popover = document.createElement('div');
+        popover.className = 'reclutamiento-filter-popover';
+
+        if (def.type === 'text') {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'reclutamiento-filter-popover-search';
+            input.value = filtro.texto || '';
+            input.addEventListener('input', () => { filtro.texto = input.value; renderLabel(); onChange(); });
+            popover.appendChild(input);
+        } else if (def.type === 'range') {
+            const desde = document.createElement('input');
+            desde.type = 'date';
+            desde.className = 'reclutamiento-filter-popover-search';
+            desde.value = filtro.desde || '';
+            desde.addEventListener('change', () => { filtro.desde = desde.value; renderLabel(); onChange(); });
+
+            const hasta = document.createElement('input');
+            hasta.type = 'date';
+            hasta.className = 'reclutamiento-filter-popover-search';
+            hasta.value = filtro.hasta || '';
+            hasta.addEventListener('change', () => { filtro.hasta = hasta.value; renderLabel(); onChange(); });
+
+            popover.appendChild(desde);
+            popover.appendChild(hasta);
+        } else if (def.type === 'radio') {
+            ['Todos', ...def.options].forEach((option) => {
+                const optionLabel = document.createElement('label');
+                optionLabel.className = 'reclutamiento-filter-popover-option';
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = `capacitacion-filtro-${def.column}`;
+                radio.checked = (option === 'Todos' && !filtro.valor) || filtro.valor === option;
+                radio.addEventListener('change', () => {
+                    filtro.valor = option === 'Todos' ? null : option;
+                    renderLabel();
+                    onChange();
+                });
+                optionLabel.appendChild(radio);
+                optionLabel.append(option);
+                popover.appendChild(optionLabel);
+            });
+        }
+
+        chip.appendChild(popover);
+    });
+
+    renderLabel();
+    container.appendChild(chip);
+};
+
+const renderCapacitacionFilterBar = (filtros) => {
+    const container = document.getElementById('capacitacion-filtros');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    CAPACITACION_FILTER_DEFS.forEach((def) => {
+        const filtro = filtros[def.column];
+        createCapacitacionFilterChip(def, filtro, container, () => {
+            callLivewire('actualizarFiltrosCapacitacion', buildCapacitacionFiltrosPayload(filtros));
+        });
+    });
+
+    const hasActive = Object.values(filtros).some((filtro) => filtro.texto || filtro.desde || filtro.hasta || filtro.valor);
+    if (hasActive) {
+        const clearButton = document.createElement('button');
+        clearButton.type = 'button';
+        clearButton.className = 'text-xs font-medium text-rose-600';
+        clearButton.textContent = 'Limpiar filtros';
+        clearButton.addEventListener('click', () => {
+            callLivewire('limpiarFiltrosCapacitacion');
+        });
+        container.appendChild(clearButton);
+    }
+};
+
+const initCapacitacionFiltros = () => {
+    const container = document.getElementById('capacitacion-filtros');
+    if (!container) return;
+    if (container.dataset.bound === 'true') return;
+    container.dataset.bound = 'true';
+
+    setupFilterPopoverDismissal();
+
+    const estado = getJsonScript('capacitacion-filtros-estado', {});
+    const filtros = {
+        nombre: { texto: estado.nombre || '' },
+        fecha_capacitacion: { desde: estado.fecha_capacitacion_desde || '', hasta: estado.fecha_capacitacion_hasta || '' },
+        fecha_entrevista: { desde: estado.fecha_entrevista_desde || '', hasta: estado.fecha_entrevista_hasta || '' },
+        apto: { valor: estado.apto || null },
+    };
+
+    renderCapacitacionFilterBar(filtros);
+};
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeGrid, { once: true });
 } else {
@@ -838,3 +1407,14 @@ if (document.readyState === 'loading') {
 }
 
 document.addEventListener('livewire:navigated', initializeGrid);
+document.addEventListener('livewire:navigated', initCapacitacionFiltros);
+
+// El contenedor de filtros de "Proceso de capacitación" solo existe en el DOM
+// cuando esa pestaña está activa (se agrega/quita vía Livewire al cambiar de
+// pestaña); un MutationObserver evita depender del nombre exacto del hook de
+// ciclo de vida de Livewire para saber cuándo ya está disponible.
+const capacitacionFiltrosObserver = new MutationObserver(() => {
+    if (document.getElementById('capacitacion-filtros')) initCapacitacionFiltros();
+});
+capacitacionFiltrosObserver.observe(document.body, { childList: true, subtree: true });
+initCapacitacionFiltros();
