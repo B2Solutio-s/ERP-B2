@@ -30,6 +30,7 @@ new class extends Component
     public string $campana = '';
     public string $fecha_capa = '';
     public string $puesto = '';
+    public bool $puestoBloqueado = false;
     public string $departamento = '';
     public string $fecha_ingreso = '';
 
@@ -118,6 +119,25 @@ new class extends Component
             $this->celular_llamadas = (string) ($candidato->numero_celular ?? '');
             $this->celular_whatsapp = (string) ($candidato->numero_celular ?? '');
             $this->campana = (string) ($candidato->campana ?? '');
+
+            $puestoCategoria = trim((string) ($candidato->puesto ?? ''));
+            $cargoCandidato = trim((string) ($candidato->cargo ?? ''));
+            $tieneCargo = $cargoCandidato !== '' && $cargoCandidato !== '-';
+
+            if (mb_strtolower($puestoCategoria) === 'ejecutivo' && $this->campana !== '') {
+                // Ejecutivo: "Ejecutivo - Móvil" / "Ejecutivo - Fija"
+                $this->puesto = "{$puestoCategoria} - {$this->campana}";
+                $this->puestoBloqueado = true;
+            } elseif ($tieneCargo && $this->campana !== '') {
+                // Administrativo con cargo real: "Practicante - TI" / "Coordinador - MKT"
+                $this->puesto = "{$cargoCandidato} - {$this->campana}";
+                $this->puestoBloqueado = true;
+            } elseif ($this->campana !== '') {
+                // Administrativo sin cargo (MC, Supervisor): solo el nombre de la campaña
+                $this->puesto = $this->campana;
+                $this->puestoBloqueado = true;
+            }
+
             $this->precargarUbicacion((string) ($candidato->distrito ?? ''));
         } elseif ($invitacion->nombre_candidato) {
             $partes = explode(' ', $invitacion->nombre_candidato, 2);
@@ -648,7 +668,12 @@ new class extends Component
                         <x-forms.section title="Puesto al que ingresas">
                             <x-forms.field label="Campaña" name="campana" />
                             <x-forms.field label="Fecha de capa" name="fecha_capa" type="date" />
-                            <x-forms.field label="Puesto" name="puesto" />
+                            <x-forms.field
+                                label="Puesto"
+                                name="puesto"
+                                :readonly="$puestoBloqueado"
+                                :hint="$puestoBloqueado ? 'Tomado del registro en Gestión de candidatos.' : null"
+                            />
                         </x-forms.section>
 
                         <x-forms.section title="Datos personales">

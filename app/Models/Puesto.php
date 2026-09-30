@@ -9,4 +9,9 @@ class Puesto extends Model
     protected $fillable = [
         'nombre',
     ];
+
+    public function campanas()
+    {
+        return $this->hasMany(Campana::class);
+    }
 }

@@ -2,6 +2,7 @@
 
 use App\Models\CandidatoReclutamiento;
 use App\Models\Campana;
+use App\Models\Puesto;
 use App\Models\OnboardingInvitation;
 use App\Events\ReclutamientoActualizado;
 use App\Services\QrCodeGenerator;
@@ -21,6 +22,9 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $rowsJson = '[]';
     public array $campanas = [];
+    public array $puestos = [];
+    public array $campanasPorPuesto = [];
+    public array $cargosPorCampana = [];
 
     public const TIPIFICACION_OPTIONS = [
         'INTERESADO - APTO',
@@ -86,6 +90,18 @@ new #[Layout('layouts.panel')] class extends Component
             ->filter()
             ->values()
             ->all();
+
+        $this->puestos = Puesto::query()->orderBy('nombre')->pluck('nombre')->values()->all();
+
+        $this->campanasPorPuesto = Puesto::with(['campanas' => fn ($query) => $query->orderBy('nombre')])
+            ->get()
+            ->mapWithKeys(fn ($puesto) => [$puesto->nombre => $puesto->campanas->pluck('nombre')->values()->all()])
+            ->all();
+
+        $this->cargosPorCampana = Campana::with(['cargos' => fn ($query) => $query->orderBy('nombre')])
+            ->get()
+            ->mapWithKeys(fn ($campana) => [$campana->nombre => $campana->cargos->pluck('nombre')->values()->all()])
+            ->all();
     }
 
     public function seleccionarModulo(string $modulo): void
@@ -112,7 +128,7 @@ new #[Layout('layouts.panel')] class extends Component
     protected function camposFormulario(): array
     {
         return [
-            'mes', 'fecha_gestion', 'agente_reclutador', 'campana', 'dni_ce', 'edad',
+            'mes', 'fecha_gestion', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'edad',
             'nombres', 'apellidos', 'numero_celular', 'distrito', 'observaciones',
             'tipificacion', 'subtipificacion_rechazo',
             'aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista',
@@ -123,7 +139,7 @@ new #[Layout('layouts.panel')] class extends Component
     protected function camposTexto(): array
     {
         return [
-            'mes', 'agente_reclutador', 'campana', 'dni_ce', 'nombres', 'apellidos', 'numero_celular',
+            'mes', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'nombres', 'apellidos', 'numero_celular',
             'distrito', 'observaciones', 'tipificacion', 'subtipificacion_rechazo',
             'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
         ];
@@ -339,7 +355,9 @@ new #[Layout('layouts.panel')] class extends Component
             'mes' => $candidato->mes,
             'fecha_gestion' => $candidato->fecha_gestion?->format('Y-m-d'),
             'agente_reclutador' => $candidato->agente_reclutador,
+            'puesto' => $candidato->puesto,
             'campana' => $candidato->campana,
+            'cargo' => $candidato->cargo,
             'dni_ce' => $candidato->dni_ce,
             'edad' => $candidato->edad,
             'nombres' => $candidato->nombres,
@@ -780,6 +798,9 @@ new #[Layout('layouts.panel')] class extends Component
             <input type="hidden" id="rowsJson" name="rowsJson" value="{{ $rowsJson }}">
             <script type="application/json" id="reclutamiento-grid-data">{!! $rowsJson !!}</script>
             <script type="application/json" id="reclutamiento-campanas">@json($campanas)</script>
+            <script type="application/json" id="reclutamiento-puestos">@json($puestos)</script>
+            <script type="application/json" id="reclutamiento-campanas-por-puesto">@json($campanasPorPuesto)</script>
+            <script type="application/json" id="reclutamiento-cargos-por-campana">@json($cargosPorCampana)</script>
             <script type="application/json" id="reclutamiento-tipificacion-options">@json(self::TIPIFICACION_OPTIONS)</script>
             <script type="application/json" id="reclutamiento-subtipificacion-options">@json(self::SUBTIPIFICACION_OPTIONS)</script>
             <script type="application/json" id="reclutamiento-asistio-options">@json(self::ASISTIO_OPTIONS)</script>
@@ -791,7 +812,7 @@ new #[Layout('layouts.panel')] class extends Component
                         <thead class="bg-slate-100 text-slate-700">
                             <tr>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-500 px-3 py-3 text-center text-white">GESTIÓN</th>
-                                <th colspan="2" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">BASE</th>
+                                <th colspan="4" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">BASE</th>
                                 <th colspan="7" class="border-b border-slate-200 bg-teal-800 px-3 py-3 text-center text-white">DATOS PRIMARIOS DE GESTIÓN</th>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-300 px-3 py-3 text-center text-slate-900">GESTIÓN DE LLAMADAS</th>
                                 <th colspan="6" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">ENTREVISTA</th>
@@ -801,7 +822,9 @@ new #[Layout('layouts.panel')] class extends Component
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Mes</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Fecha gestión</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Agente reclutador</th>
+                                <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Puesto</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Campaña</th>
+                                <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Cargo</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">DNI / C.E</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Edad</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Nombres</th>

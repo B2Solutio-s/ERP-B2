@@ -8,5 +8,11 @@ class Cargo extends Model
 {
     protected $fillable = [
         'nombre',
+        'campana_id',
     ];
+
+    public function campana()
+    {
+        return $this->belongsTo(Campana::class);
+    }
 }

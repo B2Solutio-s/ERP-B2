@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 
 const FIELD_KEYS = [
-    'mes', 'fecha_gestion', 'agente_reclutador', 'campana', 'dni_ce', 'edad', 'nombres', 'apellidos',
+    'mes', 'fecha_gestion', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'edad', 'nombres', 'apellidos',
     'numero_celular', 'distrito', 'observaciones', 'tipificacion', 'subtipificacion_rechazo',
     'aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista',
     'fecha_reprogramada', 'asistio_entrevista_reprogramada',
@@ -11,7 +11,9 @@ const FIELD_LABELS = {
     mes: 'Mes',
     fecha_gestion: 'Fecha gestión',
     agente_reclutador: 'Agente reclutador',
+    puesto: 'Puesto',
     campana: 'Campaña',
+    cargo: 'Cargo',
     dni_ce: 'DNI / C.E',
     edad: 'Edad',
     nombres: 'Nombres',
@@ -46,12 +48,12 @@ const DISTRICTS = [
 ];
 
 const TEXT_FIELDS = new Set([
-    'agente_reclutador', 'campana', 'dni_ce', 'nombres', 'apellidos', 'numero_celular', 'distrito',
+    'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'nombres', 'apellidos', 'numero_celular', 'distrito',
     'observaciones', 'tipificacion', 'subtipificacion_rechazo',
 ]);
 
 const SELECT_FIELDS = new Set([
-    'mes', 'campana', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
+    'mes', 'puesto', 'campana', 'cargo', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
     'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
 ]);
 
@@ -74,6 +76,18 @@ const getJsonScript = (id, fallback) => {
 };
 
 const getCampanas = () => getJsonScript('reclutamiento-campanas', []).filter(Boolean).map((value) => String(value).toUpperCase());
+const getPuestos = () => getJsonScript('reclutamiento-puestos', []).filter(Boolean).map((value) => String(value).toUpperCase());
+
+const buscarEnMapa = (mapa, clave) => {
+    const entrada = Object.entries(mapa).find(([key]) => key.toUpperCase() === String(clave ?? '').toUpperCase());
+    return entrada ? entrada[1] : [];
+};
+
+const campanasDelPuesto = (puesto) => buscarEnMapa(getJsonScript('reclutamiento-campanas-por-puesto', {}), puesto)
+    .map((value) => String(value).toUpperCase());
+
+const cargosDeLaCampana = (campana) => buscarEnMapa(getJsonScript('reclutamiento-cargos-por-campana', {}), campana)
+    .map((value) => String(value).toUpperCase());
 const getTipificacionOptions = () => getJsonScript('reclutamiento-tipificacion-options', ['INTERESADO - APTO', 'NO INTERESADO', 'NO PASA FILTRO', 'NO CONTESTA']);
 const getSubtipificacionOptions = () => getJsonScript('reclutamiento-subtipificacion-options', ['NO CONTESTA', 'NO TIENE EXPERIENCIA', 'NO CALIFICA']);
 const getAsistioOptions = () => getJsonScript('reclutamiento-asistio-options', ['SI, APTO', 'SI, NO APTO', 'NO', 'REPROGRAMADO']);
@@ -381,11 +395,24 @@ const mountRowsFromStorage = () => {
     return fallbackRows;
 };
 
-const createCell = (key, value = '') => {
+const createCell = (key, value = '', row = {}) => {
     const cell = document.createElement(SELECT_FIELDS.has(key) ? 'select' : 'input');
     cell.dataset.field = key;
     cell.value = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
     cell.className = 'w-full border-0 bg-transparent px-2 py-2 text-sm text-slate-700 outline-none';
+
+    if (key === 'cargo') {
+        const opciones = cargosDeLaCampana(row.campana);
+        if (opciones.length === 0) {
+            const unica = document.createElement('option');
+            unica.value = '-';
+            unica.textContent = '-';
+            cell.appendChild(unica);
+            cell.value = '-';
+            cell.disabled = true;
+            return cell;
+        }
+    }
 
     if (SELECT_FIELDS.has(key)) {
         const emptyOption = document.createElement('option');
@@ -395,19 +422,23 @@ const createCell = (key, value = '') => {
 
         const options = key === 'mes'
             ? MONTHS
-            : key === 'campana'
-                ? getCampanas()
-                : key === 'distrito'
-                    ? DISTRICTS
-                    : key === 'tipificacion'
-                        ? getTipificacionOptions()
-                        : key === 'subtipificacion_rechazo'
-                            ? getSubtipificacionOptions()
-                            : key === 'asistio_entrevista'
-                                ? getAsistioOptions()
-                                : key === 'asistio_entrevista_reprogramada'
-                                    ? getAsistioReprogramadaOptions()
-                                    : ['SI', 'NO'];
+            : key === 'puesto'
+                ? getPuestos()
+                : key === 'campana'
+                    ? campanasDelPuesto(row.puesto)
+                    : key === 'cargo'
+                        ? cargosDeLaCampana(row.campana)
+                        : key === 'distrito'
+                            ? DISTRICTS
+                            : key === 'tipificacion'
+                                ? getTipificacionOptions()
+                                : key === 'subtipificacion_rechazo'
+                                    ? getSubtipificacionOptions()
+                                    : key === 'asistio_entrevista'
+                                        ? getAsistioOptions()
+                                        : key === 'asistio_entrevista_reprogramada'
+                                            ? getAsistioReprogramadaOptions()
+                                            : ['SI', 'NO'];
 
         const normalizedValue = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
         const availableOptions = options.includes(normalizedValue) || !normalizedValue
@@ -502,6 +533,56 @@ const applyConditionalFieldLocks = (rowElement) => {
     }
 };
 
+const repoblarOpciones = (select, opciones, valorPreferido = '') => {
+    const valorAntes = select.value;
+    select.innerHTML = '';
+
+    const vacio = document.createElement('option');
+    vacio.value = '';
+    vacio.textContent = 'Seleccionar';
+    select.appendChild(vacio);
+
+    opciones.forEach((opcion) => {
+        const option = document.createElement('option');
+        option.value = opcion;
+        option.textContent = opcion;
+        select.appendChild(option);
+    });
+
+    select.disabled = false;
+    const valorFinal = valorPreferido || (opciones.includes(valorAntes) ? valorAntes : '');
+    select.value = valorFinal;
+    return valorFinal;
+};
+
+const actualizarCargoEnCascada = (tr, row) => {
+    const cargoField = tr?.querySelector('[data-field="cargo"]');
+    if (!cargoField) return;
+
+    const opciones = cargosDeLaCampana(row.campana);
+
+    if (opciones.length === 0) {
+        cargoField.innerHTML = '';
+        const unica = document.createElement('option');
+        unica.value = '-';
+        unica.textContent = '-';
+        cargoField.appendChild(unica);
+        cargoField.value = '-';
+        cargoField.disabled = true;
+        row.cargo = '-';
+    } else {
+        row.cargo = repoblarOpciones(cargoField, opciones);
+    }
+};
+
+const actualizarCampanaEnCascada = (tr, row) => {
+    const campanaField = tr?.querySelector('[data-field="campana"]');
+    if (!campanaField) return;
+
+    row.campana = repoblarOpciones(campanaField, campanasDelPuesto(row.puesto));
+    actualizarCargoEnCascada(tr, row);
+};
+
 const bindInput = (row, key, input, hiddenInput, rows) => {
     const update = () => {
         markRowDirty(row);
@@ -524,6 +605,14 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             row.mes = month;
             const monthField = input.closest('tr')?.querySelector('[data-field="mes"]');
             if (monthField) monthField.value = month;
+        }
+
+        if (key === 'puesto') {
+            actualizarCampanaEnCascada(input.closest('tr'), row);
+        }
+
+        if (key === 'campana') {
+            actualizarCargoEnCascada(input.closest('tr'), row);
         }
 
         if (key === 'tipificacion' || key === 'asistio_entrevista' || key === 'nombres' || key === 'fecha_reprogramada') {
@@ -703,7 +792,12 @@ const isDateColumn = (column) => ['fecha_gestion', 'fecha_entrevista', 'fecha_re
 
 const getColumnOptionValues = (rows, column) => {
     if (column === 'mes') return MONTHS;
+    if (column === 'puesto') return getPuestos();
     if (column === 'campana') return getCampanas();
+    if (column === 'cargo') {
+        const campanasPorPuesto = getJsonScript('reclutamiento-cargos-por-campana', {});
+        return [...new Set(Object.values(campanasPorPuesto).flat())].map((value) => String(value).toUpperCase());
+    }
     if (column === 'distrito') return DISTRICTS;
     if (column === 'tipificacion') return getTipificacionOptions();
     if (column === 'subtipificacion_rechazo') return getSubtipificacionOptions();
@@ -1185,7 +1279,7 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         FIELD_KEYS.forEach((key) => {
             const td = document.createElement('td');
             td.className = 'border-r border-slate-200 align-top';
-            const input = createCell(key, row[key] ?? '');
+            const input = createCell(key, row[key] ?? '', row);
             bindInput(row, key, input, hiddenInput, rows);
             input.addEventListener('change', () => setupColumnResizing(table));
             input.addEventListener('input', () => setupColumnResizing(table));
@@ -1298,7 +1392,9 @@ const importExcel = (rows, tbody, hiddenInput, table, event) => {
                     mes: row['MES'] ?? row.mes ?? '',
                     fecha_gestion: normalizeExcelDate(row['FECHA DE GESTIÓN'] ?? row.fecha_gestion ?? ''),
                     agente_reclutador: row['AGENTE RECLUTADOR'] ?? row.agente_reclutador ?? '',
+                    puesto: row['PUESTO'] ?? row.puesto ?? '',
                     campana: row['CAMPAÑA'] ?? row.campana ?? '',
+                    cargo: row['CARGO'] ?? row.cargo ?? '',
                     dni_ce: row['DNI / C.E'] ?? row.dni_ce ?? '',
                     edad: row['EDAD'] ?? row.edad ?? '',
                     nombres: row['NOMBRES'] ?? row['NOMBRES Y APELLIDOS'] ?? row.nombres ?? '',
