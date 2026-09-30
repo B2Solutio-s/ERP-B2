@@ -1,8 +1,8 @@
-@props(['label', 'name', 'options', 'placeholder' => 'Selecciona...', 'span' => false])
+@props(['label', 'name', 'options', 'placeholder' => 'Selecciona...', 'span' => false, 'live' => false])
 
 <div {{ $attributes->class(['sm:col-span-2' => $span]) }}>
     <label class="form-label">{{ $label }}</label>
-    <select wire:model="{{ $name }}" class="form-input">
+    <select wire:model{{ $live ? '.live' : '' }}="{{ $name }}" class="form-input">
         <option value="">{{ $placeholder }}</option>
         @foreach ($options as $valor => $texto)
             <option value="{{ $valor }}">{{ $texto }}</option>

@@ -8,13 +8,20 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Hash;
 
-#[Signature('usuarios:crear {nombre} {email} {password}')]
-#[Description('Crea un usuario de Recursos Humanos con acceso al panel del ERP')]
+#[Signature('usuarios:crear {nombre} {email} {password} {--rol=gth : admin o gth}')]
+#[Description('Crea un usuario del ERP (rol admin o gth)')]
 class CrearUsuarioRrhh extends Command
 {
     public function handle(): int
     {
         $email = $this->argument('email');
+        $rol = $this->option('rol');
+
+        if (! in_array($rol, [User::ROL_ADMIN, User::ROL_GTH], true)) {
+            $this->error('El rol debe ser "admin" o "gth".');
+
+            return self::FAILURE;
+        }
 
         if (User::where('email', $email)->exists()) {
             $this->error("Ya existe un usuario con el correo {$email}.");
@@ -26,9 +33,10 @@ class CrearUsuarioRrhh extends Command
             'name' => $this->argument('nombre'),
             'email' => $email,
             'password' => Hash::make($this->argument('password')),
+            'role' => $rol,
         ]);
 
-        $this->info("Usuario creado correctamente: {$usuario->email}");
+        $this->info("Usuario creado correctamente: {$usuario->email} (rol: {$usuario->role})");
 
         return self::SUCCESS;
     }

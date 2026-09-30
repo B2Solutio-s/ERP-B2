@@ -225,13 +225,13 @@ new #[Layout('layouts.panel')] class extends Component
                         <tr>
                             <td>{{ $empleado->nombres }} {{ $empleado->apellido_paterno }} {{ $empleado->apellido_materno }}</td>
                             <td>{{ $empleado->puesto }}</td>
-                            <td>{{ $empleado->departamento }}</td>
+                            <td>{{ $empleado->departamento ?: '-' }}</td>
                             <td>
                                 <x-ui.badge :color="match ($empleado->estado) { 'aprobado' => 'green', 'rechazado' => 'slate', default => 'amber' }">
                                     {{ $empleado->estado }}
                                 </x-ui.badge>
                             </td>
-                            <td>{{ $empleado->fecha_ingreso->format('d/m/Y') }}</td>
+                            <td>{{ $empleado->fecha_ingreso?->format('d/m/Y') ?? '-' }}</td>
                         </tr>
                     @empty
                         <tr><td colspan="5" class="py-4 text-center text-slate-400">Aun no hay empleados registrados.</td></tr>

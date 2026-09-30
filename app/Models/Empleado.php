@@ -19,6 +19,7 @@ class Empleado extends Model
         'nombres',
         'fecha_nacimiento',
         'lugar_nacimiento',
+        'edad',
         'numero_hijos',
         'estado_civil',
         'sexo',
@@ -42,7 +43,17 @@ class Empleado extends Model
         'salud_enfermedad_actual',
         'salud_enfermedad_detalle',
         'salud_medicamentos',
+        'declaracion_datos_veraces',
+        'declaracion_autoriza_verificacion',
+        'declaracion_capacitacion_condiciones',
+        'firma_dni',
+        'firma_imagen',
         'estado',
+        'contrato_puesto',
+        'contrato_remuneracion',
+        'contrato_fecha_inicio',
+        'contrato_fecha_fin',
+        'contrato_fecha_firma',
     ];
 
     protected function casts(): array
@@ -54,6 +65,13 @@ class Empleado extends Model
             'pension_afiliado' => 'boolean',
             'salud_antecedentes' => 'boolean',
             'salud_enfermedad_actual' => 'boolean',
+            'declaracion_datos_veraces' => 'boolean',
+            'declaracion_autoriza_verificacion' => 'boolean',
+            'declaracion_capacitacion_condiciones' => 'boolean',
+            'contrato_remuneracion' => 'decimal:2',
+            'contrato_fecha_inicio' => 'date',
+            'contrato_fecha_fin' => 'date',
+            'contrato_fecha_firma' => 'date',
         ];
     }
 

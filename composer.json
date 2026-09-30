@@ -9,6 +9,7 @@
         "php": "^8.3",
         "endroid/qr-code": "^6.0",
         "laravel/framework": "^13.17",
+        "laravel/reverb": "^1.11",
         "laravel/tinker": "^3.0",
         "livewire/livewire": "^4.4"
     },

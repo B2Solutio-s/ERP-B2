@@ -15,5 +15,11 @@
     },
     "optionalDependencies": {
         "@laravel/multiplex": "^0.4.1"
+    },
+    "dependencies": {
+        "laravel-echo": "^2.5.0",
+        "pusher-js": "^8.6.0",
+        "slickgrid": "^5.20.2",
+        "xlsx": "^0.18.5"
     }
 }

@@ -23,6 +23,7 @@ new class extends Component
         'Información familiar',
         'Salud',
         'Declaración',
+        'Firma',
     ];
 
     // Cabecera
@@ -39,6 +40,7 @@ new class extends Component
     public string $nombres = '';
     public string $fecha_nacimiento = '';
     public string $lugar_nacimiento = '';
+    public string $edad = '';
     public string $numero_hijos = '';
     public string $estado_civil = '';
     public string $sexo = '';
@@ -77,7 +79,13 @@ new class extends Component
     public string $salud_medicamentos = '';
 
     // VII. Declaración
-    public bool $declaracion_aceptada = false;
+    public string $declaracion_datos_veraces = '';
+    public string $declaracion_autoriza_verificacion = '';
+    public string $declaracion_capacitacion_condiciones = '';
+
+    // VIII. Firma
+    public string $firma_dni = '';
+    public string $firma_imagen = '';
 
     public function mount(string $token): void
     {
@@ -92,15 +100,185 @@ new class extends Component
         $this->invitacion = $invitacion;
         $this->email = $invitacion->email_candidato ?? '';
 
-        if ($invitacion->nombre_candidato) {
+        $candidato = $invitacion->reclutamiento_candidato_id
+            ? $invitacion->candidatoReclutamiento
+            : null;
+
+        if ($candidato) {
+            $this->nombres = trim((string) $candidato->nombres);
+
+            $apellidos = trim((string) $candidato->apellidos);
+            if ($apellidos !== '') {
+                [$paterno, $materno] = array_pad(explode(' ', $apellidos, 2), 2, '');
+                $this->apellido_paterno = $paterno;
+                $this->apellido_materno = $materno;
+            }
+
+            $this->documento_identidad = (string) ($candidato->dni_ce ?? '');
+            $this->celular_llamadas = (string) ($candidato->numero_celular ?? '');
+            $this->celular_whatsapp = (string) ($candidato->numero_celular ?? '');
+            $this->campana = (string) ($candidato->campana ?? '');
+            $this->precargarUbicacion((string) ($candidato->distrito ?? ''));
+        } elseif ($invitacion->nombre_candidato) {
             $partes = explode(' ', $invitacion->nombre_candidato, 2);
             $this->nombres = $partes[0];
             $this->apellido_paterno = $partes[1] ?? '';
         }
 
-        $this->estudios = [$this->filaEstudioVacia()];
-        $this->empleosAnteriores = [$this->filaEmpleoVacio()];
-        $this->familiares = [$this->filaFamiliarVacia()];
+        $this->estudios = array_fill(0, 2, $this->filaEstudioVacia());
+        $this->empleosAnteriores = array_fill(0, 2, $this->filaEmpleoVacio());
+        $this->familiares = array_fill(0, 4, $this->filaFamiliarVacia());
+    }
+
+    private const CAMPOS_SIN_MAYUSCULA = [
+        'email', 'estado_civil', 'sexo', 'pension_afiliado', 'pension_sistema', 'pension_afp',
+        'vivienda_tipo', 'vivienda_tenencia', 'salud_antecedentes', 'salud_enfermedad_actual',
+        'declaracion_datos_veraces', 'declaracion_autoriza_verificacion', 'declaracion_capacitacion_condiciones',
+        'firma_imagen',
+    ];
+
+    /** @var array<string, array<int, string>> colecciones repetibles con sub-campos que son selects (no texto libre) */
+    private const SUBCAMPOS_SIN_MAYUSCULA = [
+        'estudios' => ['nivel', 'grado_obtenido'],
+    ];
+
+    public function updated(string $name, mixed $value): void
+    {
+        if (! is_string($value) || $value === '') {
+            return;
+        }
+
+        if (in_array($name, self::CAMPOS_SIN_MAYUSCULA, true)) {
+            return;
+        }
+
+        foreach (self::SUBCAMPOS_SIN_MAYUSCULA as $coleccion => $subcampos) {
+            if (preg_match('/^'.preg_quote($coleccion, '/').'\.\d+\.(\w+)$/', $name, $match) && in_array($match[1], $subcampos, true)) {
+                return;
+            }
+        }
+
+        data_set($this, $name, mb_strtoupper($value));
+    }
+
+    /**
+     * Livewire no reenvía al servidor un campo "deferred" mientras el input sigue enfocado
+     * (para no interrumpir al usuario), así que updated() puede no procesar el último valor
+     * tecleado antes de enviar el formulario. Esta pasada final garantiza que lo que
+     * efectivamente se guarda en base de datos quede en mayúsculas, sin depender de eso.
+     */
+    private function normalizarMayusculas(): void
+    {
+        foreach (get_object_vars($this) as $propiedad => $valor) {
+            if (is_string($valor) && $valor !== '' && ! in_array($propiedad, self::CAMPOS_SIN_MAYUSCULA, true)) {
+                $this->{$propiedad} = mb_strtoupper($valor);
+            }
+        }
+
+        foreach (['estudios', 'empleosAnteriores', 'familiares'] as $coleccion) {
+            $excluidos = self::SUBCAMPOS_SIN_MAYUSCULA[$coleccion] ?? [];
+
+            foreach ($this->{$coleccion} as $indice => $fila) {
+                foreach ($fila as $campo => $valor) {
+                    if (is_string($valor) && $valor !== '' && ! in_array($campo, $excluidos, true)) {
+                        $this->{$coleccion}[$indice][$campo] = mb_strtoupper($valor);
+                    }
+                }
+            }
+        }
+    }
+
+    public function updatedPensionAfiliado(): void
+    {
+        if ($this->pension_afiliado !== 'si') {
+            $this->pension_sistema = '';
+            $this->pension_afp = '';
+            $this->pension_cuspp = '';
+        }
+    }
+
+    public function updatedPensionSistema(): void
+    {
+        if ($this->pension_sistema !== 'afp') {
+            $this->pension_afp = '';
+        }
+    }
+
+    public function updatedSaludAntecedentes(): void
+    {
+        $this->limpiarDetalleSaludSiNoAplica();
+    }
+
+    public function updatedSaludEnfermedadActual(): void
+    {
+        $this->limpiarDetalleSaludSiNoAplica();
+    }
+
+    private function limpiarDetalleSaludSiNoAplica(): void
+    {
+        if ($this->salud_antecedentes !== 'si' && $this->salud_enfermedad_actual !== 'si') {
+            $this->salud_enfermedad_detalle = '';
+        }
+    }
+
+    private function precargarUbicacion(string $distritoTexto): void
+    {
+        $distritoTexto = trim(mb_strtoupper($distritoTexto));
+
+        if ($distritoTexto === '') {
+            return;
+        }
+
+        // Varios distritos del Perú comparten el mismo nombre en departamentos distintos
+        // (ej. "SAN MIGUEL" existe en Lima, Ayacucho, Cajamarca, San Martín...). Solo
+        // precargamos departamento/provincia si el nombre es inequívoco a nivel nacional;
+        // si hay más de una coincidencia, dejamos que la persona elija manualmente.
+        $coincidencias = [];
+        foreach ($this->ubigeo() as $departamento => $provincias) {
+            foreach ($provincias as $provincia => $distritos) {
+                if (in_array($distritoTexto, $distritos, true)) {
+                    $coincidencias[] = [$departamento, $provincia];
+                }
+            }
+        }
+
+        if (count($coincidencias) === 1) {
+            [$this->departamento_residencia, $this->provincia] = $coincidencias[0];
+            $this->distrito = $distritoTexto;
+        }
+    }
+
+    private function ubigeo(): array
+    {
+        static $datos = null;
+
+        return $datos ??= require resource_path('data/peru-ubigeo.php');
+    }
+
+    public function departamentosDisponibles(): array
+    {
+        return array_keys($this->ubigeo());
+    }
+
+    public function provinciasDisponibles(): array
+    {
+        return array_keys($this->ubigeo()[$this->departamento_residencia] ?? []);
+    }
+
+    public function distritosDisponibles(): array
+    {
+        return $this->ubigeo()[$this->departamento_residencia][$this->provincia] ?? [];
+    }
+
+    public function updatedDepartamentoResidencia(): void
+    {
+        $this->provincia = '';
+        $this->distrito = '';
+    }
+
+    public function updatedProvincia(): void
+    {
+        $this->distrito = '';
     }
 
     private function filaEstudioVacia(): array
@@ -190,14 +368,13 @@ new class extends Component
                 'apellido_materno' => 'required|string|max:100',
                 'nombres' => 'required|string|max:100',
                 'fecha_nacimiento' => 'required|date|before:today',
+                'edad' => 'nullable|integer|min:0|max:120',
                 'direccion' => 'required|string|max:255',
                 'celular_llamadas' => 'required|string|max:30',
                 'email' => 'required|email|max:150|unique:empleados,email',
                 'contacto_emergencia_nombre' => 'required|string|max:100',
                 'contacto_emergencia_telefono' => 'required|string|max:30',
-                'fecha_ingreso' => 'required|date',
                 'puesto' => 'required|string|max:100',
-                'departamento' => 'required|string|max:100',
             ],
             2 => [
                 'pension_afiliado' => 'required|in:si,no',
@@ -215,7 +392,13 @@ new class extends Component
                 'salud_enfermedad_actual' => 'required|in:si,no',
             ],
             7 => [
-                'declaracion_aceptada' => 'accepted',
+                'declaracion_datos_veraces' => 'required|in:si',
+                'declaracion_autoriza_verificacion' => 'required|in:si',
+                'declaracion_capacitacion_condiciones' => 'required|in:si',
+            ],
+            8 => [
+                'firma_dni' => 'required|string|max:30|same:documento_identidad',
+                'firma_imagen' => 'required|string',
             ],
             default => [],
         };
@@ -229,7 +412,19 @@ new class extends Component
             $this->reglasPaso(3),
             $this->reglasPaso(6),
             $this->reglasPaso(7),
+            $this->reglasPaso(8),
         );
+    }
+
+    protected function mensajes(): array
+    {
+        return [
+            'declaracion_datos_veraces.in' => 'Debes aceptar esta declaración para continuar.',
+            'declaracion_autoriza_verificacion.in' => 'Debes aceptar esta declaración para continuar.',
+            'declaracion_capacitacion_condiciones.in' => 'Debes aceptar esta declaración para continuar.',
+            'firma_dni.same' => 'El DNI ingresado no coincide con el registrado en el paso 1.',
+            'firma_imagen.required' => 'Debes dibujar tu firma antes de continuar.',
+        ];
     }
 
     public function siguiente(): void
@@ -237,7 +432,7 @@ new class extends Component
         $reglas = $this->reglasPaso($this->paso);
 
         if ($reglas !== []) {
-            $this->validate($reglas);
+            $this->validate($reglas, $this->mensajes());
         }
 
         if ($this->paso < count($this->pasos)) {
@@ -267,7 +462,9 @@ new class extends Component
 
     public function guardar(): void
     {
-        $this->validate($this->todasLasReglas());
+        $this->normalizarMayusculas();
+
+        $this->validate($this->todasLasReglas(), $this->mensajes());
 
         DB::transaction(function () {
             $empleado = Empleado::create([
@@ -275,14 +472,15 @@ new class extends Component
                 'campana' => $this->campana ?: null,
                 'fecha_capa' => $this->fecha_capa ?: null,
                 'puesto' => $this->puesto,
-                'departamento' => $this->departamento,
-                'fecha_ingreso' => $this->fecha_ingreso,
+                'departamento' => $this->departamento ?: null,
+                'fecha_ingreso' => $this->fecha_ingreso ?: null,
                 'documento_identidad' => $this->documento_identidad,
                 'apellido_paterno' => $this->apellido_paterno,
                 'apellido_materno' => $this->apellido_materno,
                 'nombres' => $this->nombres,
                 'fecha_nacimiento' => $this->fecha_nacimiento,
                 'lugar_nacimiento' => $this->lugar_nacimiento ?: null,
+                'edad' => $this->edad !== '' ? (int) $this->edad : null,
                 'numero_hijos' => $this->numero_hijos !== '' ? (int) $this->numero_hijos : null,
                 'estado_civil' => $this->estado_civil ?: null,
                 'sexo' => $this->sexo ?: null,
@@ -306,6 +504,11 @@ new class extends Component
                 'salud_enfermedad_actual' => $this->salud_enfermedad_actual === 'si',
                 'salud_enfermedad_detalle' => $this->salud_enfermedad_detalle ?: null,
                 'salud_medicamentos' => $this->salud_medicamentos ?: null,
+                'declaracion_datos_veraces' => $this->declaracion_datos_veraces === 'si',
+                'declaracion_autoriza_verificacion' => $this->declaracion_autoriza_verificacion === 'si',
+                'declaracion_capacitacion_condiciones' => $this->declaracion_capacitacion_condiciones === 'si',
+                'firma_dni' => $this->firma_dni,
+                'firma_imagen' => $this->firma_imagen,
             ]);
 
             $empleado->estudios()->createMany($this->filasConDatos($this->estudios));
@@ -320,8 +523,8 @@ new class extends Component
 };
 ?>
 
-<div class="page-shell">
-    <div class="mx-auto max-w-3xl">
+<div class="page-shell onboarding-ficha">
+    <div class="mx-auto max-w-[920px]">
         @if ($invalida)
             <x-ui.card centered>
                 <h1 class="text-xl font-semibold text-slate-900">Este enlace no es valido</h1>
@@ -352,8 +555,6 @@ new class extends Component
                             <x-forms.field label="Campaña" name="campana" />
                             <x-forms.field label="Fecha de capa" name="fecha_capa" type="date" />
                             <x-forms.field label="Puesto" name="puesto" />
-                            <x-forms.field label="Departamento" name="departamento" />
-                            <x-forms.field label="Fecha de ingreso" name="fecha_ingreso" type="date" />
                         </x-forms.section>
 
                         <x-forms.section title="Datos personales">
@@ -363,50 +564,68 @@ new class extends Component
                             <x-forms.field label="Nombres" name="nombres" />
                             <x-forms.field label="Fecha de nacimiento" name="fecha_nacimiento" type="date" />
                             <x-forms.field label="Lugar de nacimiento" name="lugar_nacimiento" />
+                            <x-forms.field label="Edad" name="edad" type="number" />
                             <x-forms.field label="Nº de hijos" name="numero_hijos" type="number" />
-                            <x-forms.select label="Estado civil" name="estado_civil" :options="[
+                            <x-forms.choice label="Estado civil" name="estado_civil" :options="[
                                 'soltero' => 'Soltero(a)',
                                 'casado' => 'Casado(a)',
                                 'conviviente' => 'Conviviente',
                                 'divorciado' => 'Divorciado(a)',
                                 'viudo' => 'Viudo(a)',
-                            ]" />
-                            <x-forms.select label="Sexo" name="sexo" :options="['F' => 'Femenino', 'M' => 'Masculino']" />
-                        </x-forms.section>
-
-                        <x-forms.section title="Domicilio y contacto">
+                            ]" span />
+                            <x-forms.choice label="Sexo" name="sexo" :options="['F' => 'Femenino', 'M' => 'Masculino']" />
                             <x-forms.field label="Dirección actual" name="direccion" span />
-                            <x-forms.select label="Tipo de vivienda" name="vivienda_tipo" :options="[
+                            <x-forms.choice label="Tipo de vivienda" name="vivienda_tipo" :options="[
                                 'departamento' => 'Departamento',
                                 'habitacion' => 'Habitación',
                                 'casa' => 'Casa',
                             ]" />
-                            <x-forms.select label="Tenencia" name="vivienda_tenencia" :options="['propia' => 'Propia', 'alquilada' => 'Alquilada']" />
-                            <x-forms.field label="Distrito" name="distrito" />
-                            <x-forms.field label="Provincia" name="provincia" />
-                            <x-forms.field label="Departamento" name="departamento_residencia" />
+                            <x-forms.choice label="Tenencia" name="vivienda_tenencia" :options="['propia' => 'Propia', 'alquilada' => 'Alquilada']" />
+                            <x-forms.select
+                                label="Departamento"
+                                name="departamento_residencia"
+                                :options="array_combine($this->departamentosDisponibles(), $this->departamentosDisponibles())"
+                                live
+                            />
+                            <x-forms.select
+                                label="Provincia"
+                                name="provincia"
+                                :options="array_combine($this->provinciasDisponibles(), $this->provinciasDisponibles())"
+                                :placeholder="$departamento_residencia ? 'Selecciona...' : 'Elige primero un departamento'"
+                                live
+                            />
+                            <x-forms.select
+                                label="Distrito"
+                                name="distrito"
+                                :options="array_combine($this->distritosDisponibles(), $this->distritosDisponibles())"
+                                :placeholder="$provincia ? 'Selecciona...' : 'Elige primero una provincia'"
+                            />
                             <x-forms.field label="Celular de llamadas" name="celular_llamadas" />
+                            <x-forms.field label="Correo electrónico" name="email" type="email" />
                             <x-forms.field label="Celular de WhatsApp" name="celular_whatsapp" />
-                            <x-forms.field label="Correo electrónico" name="email" type="email" span />
-                        </x-forms.section>
-
-                        <x-forms.section title="Contacto de emergencia">
-                            <x-forms.field label="Nombre" name="contacto_emergencia_nombre" />
-                            <x-forms.field label="Parentesco" name="contacto_emergencia_parentesco" />
-                            <x-forms.field label="Número de contacto / celular" name="contacto_emergencia_telefono" />
+                            <x-forms.field label="Nombre de contacto de emergencia" name="contacto_emergencia_nombre" />
+                            <x-forms.field label="Parentesco de contacto de emergencia" name="contacto_emergencia_parentesco" />
+                            <x-forms.field label="Número de contacto" name="contacto_emergencia_telefono" />
                         </x-forms.section>
                     </div>
                 @elseif ($paso === 2)
                     <x-forms.section title="Sistema pensionario">
-                        <x-forms.select label="¿Estoy afiliado?" name="pension_afiliado" :options="['si' => 'Sí', 'no' => 'No']" />
-                        <x-forms.select label="Sistema" name="pension_sistema" :options="['onp' => 'ONP', 'afp' => 'AFP']" />
-                        <x-forms.select label="AFP" name="pension_afp" :options="[
-                            'profuturo' => 'Profuturo',
-                            'integra' => 'Integra',
-                            'prima' => 'Prima',
-                            'habitat' => 'Hábitat',
-                        ]" />
-                        <x-forms.field label="Código CUSPP (opcional)" name="pension_cuspp" />
+                        <x-forms.choice label="¿Estoy afiliado?" name="pension_afiliado" :options="['si' => 'Sí', 'no' => 'No']" live span />
+
+                        @if ($pension_afiliado === 'si')
+                            <x-forms.choice label="Sistema" name="pension_sistema" :options="['onp' => 'ONP', 'afp' => 'AFP']" live span />
+
+                            @if ($pension_sistema === 'afp')
+                                <x-forms.choice label="AFP" name="pension_afp" :options="[
+                                    'profuturo' => 'Profuturo',
+                                    'integra' => 'Integra',
+                                    'prima' => 'Prima',
+                                    'habitat' => 'Hábitat',
+                                ]" span />
+                            @endif
+
+                            <x-forms.field label="Código CUSPP (opcional)" name="pension_cuspp" />
+                        @endif
                     </x-forms.section>
                 @elseif ($paso === 3)
                     <div class="space-y-4">
@@ -425,8 +644,8 @@ new class extends Component
                                     'trunco' => 'Trunco',
                                     'culminado' => 'Culminado',
                                 ]" />
-                                <x-forms.field label="Desde" name="estudios.{{ $indice }}.desde" />
-                                <x-forms.field label="Hasta" name="estudios.{{ $indice }}.hasta" />
+                                <x-forms.field label="Desde" name="estudios.{{ $indice }}.desde" type="date" />
+                                <x-forms.field label="Hasta" name="estudios.{{ $indice }}.hasta" type="date" />
                             </x-ui.repeater-card>
                         @endforeach
                     </div>
@@ -443,8 +662,8 @@ new class extends Component
                                 <x-forms.field label="Cargo" name="empleosAnteriores.{{ $indice }}.cargo" />
                                 <x-forms.field label="Función principal" name="empleosAnteriores.{{ $indice }}.funcion_principal" span />
                                 <x-forms.field label="Sueldo" name="empleosAnteriores.{{ $indice }}.sueldo" />
-                                <x-forms.field label="Fecha inicio" name="empleosAnteriores.{{ $indice }}.fecha_inicio" />
-                                <x-forms.field label="Fecha término" name="empleosAnteriores.{{ $indice }}.fecha_termino" />
+                                <x-forms.field label="Fecha inicio" name="empleosAnteriores.{{ $indice }}.fecha_inicio" type="date" />
+                                <x-forms.field label="Fecha término" name="empleosAnteriores.{{ $indice }}.fecha_termino" type="date" />
                                 <x-forms.field label="Motivo de cese" name="empleosAnteriores.{{ $indice }}.motivo_cese" span />
                                 <x-forms.field label="Jefe inmediato" name="empleosAnteriores.{{ $indice }}.jefe_nombre" />
                                 <x-forms.field label="Cargo del jefe" name="empleosAnteriores.{{ $indice }}.jefe_cargo" />
@@ -456,40 +675,113 @@ new class extends Component
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
                             <h3 class="form-section-title">Información familiar (padres, hijos, cónyuge, hermanos)</h3>
-                            <button type="button" wire:click="agregarFamiliar" class="btn-secondary">+ Agregar familiar</button>
+                            <button type="button" wire:click="agregarFamiliar" class="btn-secondary">+ Agregar fila</button>
                         </div>
 
-                        @foreach ($familiares as $indice => $fila)
-                            <x-ui.repeater-card :titulo="'Familiar '.($indice + 1)" onRemove="quitarFamiliar({{ $indice }})" :puede-quitar="count($familiares) > 1" wire:key="familiar-{{ $indice }}">
-                                <x-forms.field label="Apellidos y nombres" name="familiares.{{ $indice }}.nombres_apellidos" span />
-                                <x-forms.field label="Parentesco" name="familiares.{{ $indice }}.parentesco" />
-                                <x-forms.field label="Fecha de nacimiento" name="familiares.{{ $indice }}.fecha_nacimiento" type="date" />
-                                <x-forms.field label="Edad" name="familiares.{{ $indice }}.edad" type="number" />
-                                <x-forms.field label="Ocupación" name="familiares.{{ $indice }}.ocupacion" />
-                            </x-ui.repeater-card>
-                        @endforeach
+                        <div class="overflow-x-auto rounded-xl border border-slate-100">
+                            <table class="data-table min-w-[720px]">
+                                <thead>
+                                    <tr>
+                                        <th>Apellidos y nombres</th>
+                                        <th>Parentesco</th>
+                                        <th>Fecha de nacimiento</th>
+                                        <th>Edad</th>
+                                        <th>Ocupación</th>
+                                        <th class="w-10"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach ($familiares as $indice => $fila)
+                                        <tr wire:key="familiar-{{ $indice }}">
+                                            <td><input type="text" wire:model="familiares.{{ $indice }}.nombres_apellidos" class="form-input"></td>
+                                            <td><input type="text" wire:model="familiares.{{ $indice }}.parentesco" class="form-input"></td>
+                                            <td><input type="date" wire:model="familiares.{{ $indice }}.fecha_nacimiento" class="form-input"></td>
+                                            <td><input type="number" wire:model="familiares.{{ $indice }}.edad" class="form-input"></td>
+                                            <td><input type="text" wire:model="familiares.{{ $indice }}.ocupacion" class="form-input"></td>
+                                            <td class="text-center">
+                                                @if (count($familiares) > 1)
+                                                    <button type="button" wire:click="quitarFamiliar({{ $indice }})" class="text-rose-400 transition hover:text-rose-600" aria-label="Quitar fila" title="Quitar fila">
+                                                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                                        </svg>
+                                                    </button>
+                                                @endif
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 @elseif ($paso === 6)
                     <x-forms.section title="Salud">
-                        <x-forms.select label="¿Tiene antecedentes de enfermedades cardíacas o oncológicas?" name="salud_antecedentes" :options="['si' => 'Sí', 'no' => 'No']" span />
-                        <x-forms.select label="¿Actualmente sufre de alguna enfermedad?" name="salud_enfermedad_actual" :options="['si' => 'Sí', 'no' => 'No']" span />
-                        <x-forms.textarea label="Si la respuesta es SÍ, por favor detállelo" name="salud_enfermedad_detalle" span />
-                        <x-forms.textarea label="¿Toma algún medicamento?" name="salud_medicamentos" span />
+                        <x-forms.choice label="¿Tiene antecedentes de enfermedades cardíacas o oncológicas?" name="salud_antecedentes" :options="['si' => 'Sí', 'no' => 'No']" live span />
+                        <x-forms.choice label="¿Actualmente sufre de alguna enfermedad?" name="salud_enfermedad_actual" :options="['si' => 'Sí', 'no' => 'No']" live span />
+
+                        @if ($salud_antecedentes === 'si' || $salud_enfermedad_actual === 'si')
+                            <x-forms.textarea label="Si la respuesta es SÍ, por favor detállelo" name="salud_enfermedad_detalle" span />
+                        @endif
+
+                        <x-forms.field label="¿Toma algún medicamento?" name="salud_medicamentos" span />
                     </x-forms.section>
                 @elseif ($paso === 7)
-                    <div class="space-y-4">
+                    <div class="space-y-5">
                         <h3 class="form-section-title">Declaración</h3>
-                        <p class="text-sm text-slate-600">
-                            Declaro que la información proporcionada en esta ficha es verídica y completa, y autorizo a la empresa a
-                            verificarla y utilizarla para fines de gestión de recursos humanos.
-                        </p>
-                        <label class="flex items-start gap-2 text-sm text-slate-700">
-                            <input type="checkbox" wire:model="declaracion_aceptada" class="mt-1">
-                            Acepto la declaración anterior.
-                        </label>
-                        @error('declaracion_aceptada')
-                            <p class="form-error">{{ $message }}</p>
-                        @enderror
+
+                        <div class="space-y-2">
+                            <p class="text-sm text-slate-600">
+                                DECLARO BAJO JURAMENTO que los datos registrados en la ficha de ingreso con respecto a la dirección
+                                actual, son verdaderos. En caso de falsedad, declaro haber incurrido en el delito, contra la Fe
+                                Pública, falsificación de Documentos (Artículo 427° del Código Penal, en concordancia con el
+                                Artículo IV inciso 1.7) "Principio de presunción de veracidad" del Título preliminar de la Ley de
+                                Procedimiento Administrativo General, Ley N° 27444.
+                            </p>
+                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_datos_veraces" :options="['si' => 'Sí', 'no' => 'No']" />
+                        </div>
+
+                        <div class="space-y-2 border-t border-slate-100 pt-4">
+                            <p class="text-sm text-slate-600">
+                                Declaro bajo juramento que los datos proporcionados son exactos, autorizando a la Institución en la
+                                que laboró a efectuar las verificaciones que juzgue necesarias; asimismo me comprometo a presentar
+                                los documentos que me soliciten.
+                            </p>
+                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_autoriza_verificacion" :options="['si' => 'Sí', 'no' => 'No']" />
+                        </div>
+
+                        <div class="space-y-2 border-t border-slate-100 pt-4">
+                            <p class="text-sm text-slate-600">
+                                Declaro estar informado/a de que la capacitación es un proceso formativo y evaluativo, por lo que me
+                                comprometo a participar de manera responsable durante su desarrollo. Asimismo, entiendo y acepto que,
+                                si decido no continuar voluntariamente con el proceso antes de finalizarlo, no corresponderá el pago
+                                por capacitación. Por otro lado, en caso la empresa determine el retiro del participante por motivos
+                                internos, sí se realizará el abono correspondiente por los días de capacitación efectuados.
+                            </p>
+                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_capacitacion_condiciones" :options="['si' => 'Sí', 'no' => 'No']" />
+                        </div>
+                    </div>
+                @elseif ($paso === 8)
+                    <div class="space-y-6">
+                        <x-forms.section title="Confirma tu identidad">
+                            <x-forms.field label="DNI" name="firma_dni" />
+                        </x-forms.section>
+
+                        <div>
+                            <label class="form-label">Firma</label>
+                            <div class="firma-pad">
+                                <canvas data-firma-canvas></canvas>
+                            </div>
+                            <input type="hidden" wire:model="firma_imagen" data-firma-input>
+                            <div class="mt-2 flex items-center justify-between">
+                                <p class="text-xs text-slate-400">Dibuja tu firma con el cursor o el dedo.</p>
+                                <button type="button" class="btn-secondary w-auto" data-firma-limpiar>Limpiar firma</button>
+                            </div>
+                            @error('firma_imagen')
+                                <p class="form-error">{{ $message }}</p>
+                            @enderror
+                            @error('firma_dni')
+                                <p class="form-error">{{ $message }}</p>
+                            @enderror
+                        </div>
                     </div>
                 @endif
 

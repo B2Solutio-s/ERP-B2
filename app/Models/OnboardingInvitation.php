@@ -12,6 +12,7 @@ class OnboardingInvitation extends Model
         'nombre_candidato',
         'email_candidato',
         'creado_por',
+        'reclutamiento_candidato_id',
         'expira_en',
         'usado_en',
     ];
@@ -37,6 +38,11 @@ class OnboardingInvitation extends Model
     public function empleado()
     {
         return $this->hasOne(Empleado::class);
+    }
+
+    public function candidatoReclutamiento()
+    {
+        return $this->belongsTo(CandidatoReclutamiento::class, 'reclutamiento_candidato_id');
     }
 
     public function estaVigente(): bool
