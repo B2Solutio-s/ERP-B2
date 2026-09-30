@@ -2,7 +2,7 @@
 
 <div {{ $attributes->class(['sm:col-span-2' => $span]) }}>
     <label class="form-label">{{ $label }}</label>
-    <textarea wire:model="{{ $name }}" rows="{{ $rows }}" class="form-input"></textarea>
+    <textarea wire:model="{{ $name }}" rows="{{ $rows }}" class="form-input resize-none"></textarea>
     @error($name)
         <p class="form-error">{{ $message }}</p>
     @enderror

@@ -4,6 +4,7 @@ use App\Models\CandidatoReclutamiento;
 use App\Models\Campana;
 use App\Models\OnboardingInvitation;
 use App\Events\ReclutamientoActualizado;
+use App\Services\QrCodeGenerator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Carbon;
 use Livewire\Attributes\Layout;
@@ -14,8 +15,6 @@ new #[Layout('layouts.panel')] class extends Component
     public array $modulos = [
         'candidatos' => 'Gestión de candidatos',
         'capacitacion' => 'Proceso de capacitación',
-        'entrevista' => 'Entrevista',
-        'seguimiento' => 'Seguimiento',
     ];
 
     public string $moduloActivo = 'candidatos';
@@ -56,6 +55,12 @@ new #[Layout('layouts.panel')] class extends Component
         'SI, NO APTO',
         'NO',
         'REPROGRAMADO',
+    ];
+
+    public const CAPACITACION_ASISTIO_REPROGRAMADA_OPTIONS = [
+        'SI, APTO',
+        'SI, NO APTO',
+        'NO',
     ];
 
     /** @var array<int, array<string, mixed>> */
@@ -108,7 +113,7 @@ new #[Layout('layouts.panel')] class extends Component
     {
         return [
             'mes', 'fecha_gestion', 'agente_reclutador', 'campana', 'dni_ce', 'edad',
-            'nombres', 'numero_celular', 'distrito', 'observaciones',
+            'nombres', 'apellidos', 'numero_celular', 'distrito', 'observaciones',
             'tipificacion', 'subtipificacion_rechazo',
             'aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista',
             'fecha_reprogramada', 'asistio_entrevista_reprogramada',
@@ -118,7 +123,7 @@ new #[Layout('layouts.panel')] class extends Component
     protected function camposTexto(): array
     {
         return [
-            'mes', 'agente_reclutador', 'campana', 'dni_ce', 'nombres', 'numero_celular',
+            'mes', 'agente_reclutador', 'campana', 'dni_ce', 'nombres', 'apellidos', 'numero_celular',
             'distrito', 'observaciones', 'tipificacion', 'subtipificacion_rechazo',
             'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
         ];
@@ -172,7 +177,7 @@ new #[Layout('layouts.panel')] class extends Component
             ? CandidatoReclutamiento::with('bloqueadoPor')->find($fila['id'])
             : null;
 
-        if (! $candidato && (! empty($payload['dni_ce']) || ! empty($payload['nombres']))) {
+        if (! $candidato && (! empty($payload['dni_ce']) || ! empty($payload['nombres']) || ! empty($payload['apellidos']))) {
             $candidato = $this->filaDuplicada($payload);
         }
 
@@ -338,6 +343,7 @@ new #[Layout('layouts.panel')] class extends Component
             'dni_ce' => $candidato->dni_ce,
             'edad' => $candidato->edad,
             'nombres' => $candidato->nombres,
+            'apellidos' => $candidato->apellidos,
             'numero_celular' => $candidato->numero_celular,
             'distrito' => $candidato->distrito,
             'observaciones' => $candidato->observaciones,
@@ -353,6 +359,8 @@ new #[Layout('layouts.panel')] class extends Component
             'bloqueado_por_nombre' => $candidato->bloqueadoPor?->name,
             'bloqueado_hasta' => $candidato->bloqueado_hasta?->toIso8601String(),
             'graduado' => $this->candidatoGraduadoACapacitacion($candidato),
+            'no_apto_capacitacion' => $candidato->noAptoEnCapacitacion(),
+            'no_apto_detalle' => $candidato->detalleNoAptoCapacitacion(),
         ])->all();
     }
 
@@ -370,7 +378,7 @@ new #[Layout('layouts.panel')] class extends Component
     protected function filaDuplicada(array $payload): ?CandidatoReclutamiento
     {
         $dni = trim((string) ($payload['dni_ce'] ?? ''));
-        $nombre = trim((string) ($payload['nombres'] ?? ''));
+        $nombreCompleto = trim(($payload['nombres'] ?? '') . ' ' . ($payload['apellidos'] ?? ''));
         $telefono = preg_replace('/\D+/', '', (string) ($payload['numero_celular'] ?? ''));
 
         if ($dni !== '') {
@@ -383,9 +391,9 @@ new #[Layout('layouts.panel')] class extends Component
             }
         }
 
-        if ($nombre !== '' && $telefono !== '') {
+        if ($nombreCompleto !== '' && $telefono !== '') {
             $candidato = CandidatoReclutamiento::query()
-                ->whereRaw('LOWER(TRIM(COALESCE(nombres, ""))) = ?', [mb_strtolower($nombre)])
+                ->whereRaw('LOWER(TRIM(CONCAT(COALESCE(nombres, ""), " ", COALESCE(apellidos, "")))) = ?', [mb_strtolower($nombreCompleto)])
                 ->whereRaw('REPLACE(REPLACE(REPLACE(numero_celular, " ", ""), "-", ""), "+", "") = ?', [$telefono])
                 ->first();
 
@@ -415,6 +423,11 @@ new #[Layout('layouts.panel')] class extends Component
             ->orderByDesc('id')
             ->get()
             ->filter(fn ($candidato) => $this->candidatoGraduadoACapacitacion($candidato))
+            ->each(function ($candidato) {
+                if (! isset($this->capacitaciones[$candidato->id])) {
+                    $this->capacitaciones[$candidato->id] = $this->valoresCapacitacion($candidato);
+                }
+            })
             ->filter(function ($candidato) {
                 if ($this->capacitacionBuscarNombre !== '') {
                     $termino = mb_strtolower($this->capacitacionBuscarNombre);
@@ -558,6 +571,24 @@ new #[Layout('layouts.panel')] class extends Component
         return "{$fechaTexto} · " . ($asistio ?: 'sin registrar');
     }
 
+    public function guardarObservacionCapacitacion(int $id, string $campo, string $valor): void
+    {
+        if (! in_array($campo, ['obs_1', 'obs_2', 'obs_1_reprogramada', 'obs_2_reprogramada'], true)) {
+            return;
+        }
+
+        if (! isset($this->capacitaciones[$id])) {
+            $candidato = CandidatoReclutamiento::find($id);
+            if (! $candidato) {
+                return;
+            }
+            $this->capacitaciones[$id] = $this->valoresCapacitacion($candidato);
+        }
+
+        $this->capacitaciones[$id][$campo] = $valor;
+        $this->guardarCapacitacion($id);
+    }
+
     public function guardarCapacitacion(int $id): void
     {
         $candidato = CandidatoReclutamiento::find($id);
@@ -597,10 +628,19 @@ new #[Layout('layouts.panel')] class extends Component
                     : $valorActual;
             }
         } else {
+            if (empty($datos['capacitacion_1'])) {
+                $datos['asistio_cap_1'] = null;
+                $datos['capacitacion_1_reprogramada'] = null;
+                $datos['asistio_cap_1_reprogramada'] = null;
+                $datos['obs_1_reprogramada'] = null;
+            }
+
             if (($datos['asistio_cap_1'] ?? null) !== 'REPROGRAMADO') {
                 $datos['capacitacion_1_reprogramada'] = null;
                 $datos['asistio_cap_1_reprogramada'] = null;
                 $datos['obs_1_reprogramada'] = null;
+            } elseif (empty($datos['capacitacion_1_reprogramada'])) {
+                $datos['asistio_cap_1_reprogramada'] = null;
             }
 
             if (! $this->puedeCapacitacion2($datos)) {
@@ -610,10 +650,19 @@ new #[Layout('layouts.panel')] class extends Component
                 $datos['capacitacion_2_reprogramada'] = null;
                 $datos['asistio_cap_2_reprogramada'] = null;
                 $datos['obs_2_reprogramada'] = null;
-            } elseif (($datos['asistio_cap_2'] ?? null) !== 'REPROGRAMADO') {
-                $datos['capacitacion_2_reprogramada'] = null;
-                $datos['asistio_cap_2_reprogramada'] = null;
-                $datos['obs_2_reprogramada'] = null;
+            } else {
+                if (empty($datos['capacitacion_2'])) {
+                    $datos['asistio_cap_2'] = null;
+                    $datos['capacitacion_2_reprogramada'] = null;
+                    $datos['asistio_cap_2_reprogramada'] = null;
+                    $datos['obs_2_reprogramada'] = null;
+                } elseif (($datos['asistio_cap_2'] ?? null) !== 'REPROGRAMADO') {
+                    $datos['capacitacion_2_reprogramada'] = null;
+                    $datos['asistio_cap_2_reprogramada'] = null;
+                    $datos['obs_2_reprogramada'] = null;
+                } elseif (empty($datos['capacitacion_2_reprogramada'])) {
+                    $datos['asistio_cap_2_reprogramada'] = null;
+                }
             }
 
             if (! $this->puedeMarcarApto($datos)) {
@@ -635,6 +684,16 @@ new #[Layout('layouts.panel')] class extends Component
         $candidato->update($datos);
 
         $this->capacitaciones[$id] = $this->valoresCapacitacion($candidato);
+
+        $this->dispatch('reclutamiento-filas-actualizadas', filas: $this->filasActuales());
+
+        broadcast(new ReclutamientoActualizado(
+            tipo: 'tabla-actualizada',
+            filaId: $candidato->id,
+            usuarioId: Auth::id(),
+            usuarioNombre: Auth::user()->name,
+            filas: $this->filasActuales(),
+        ));
     }
 
     public function generarInvitacionCapacitacion(int $id): void
@@ -663,16 +722,9 @@ new #[Layout('layouts.panel')] class extends Component
 };
 ?>
 
-<div class="space-y-6">
+<div class="space-y-6 reclutamiento-compact">
     <div class="card-panel">
-        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">GTH</p>
-                <h2 class="mt-2 text-2xl font-bold text-slate-900">Proceso de reclutamiento</h2>
-            </div>
-        </div>
-
-        <div class="reclutamiento-tabs mt-5">
+        <div class="reclutamiento-tabs">
             @foreach ($modulos as $clave => $etiqueta)
                 <button
                     type="button"
@@ -683,13 +735,11 @@ new #[Layout('layouts.panel')] class extends Component
                 </button>
             @endforeach
         </div>
-    </div>
 
-    <div class="card-panel" @style(['display: none' => $moduloActivo !== 'candidatos'])>
+    <div class="mt-5" @style(['display: none' => $moduloActivo !== 'candidatos'])>
         <div class="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
                 <h3 class="text-xl font-semibold text-slate-900">Gestion de candidatos</h3>
-                <p class="text-sm text-slate-500">Carga, edición y mantenimiento de la base inicial del proceso.</p>
             </div>
             <div class="flex gap-2">
                 <button type="button" id="agregar-candidato" class="btn-primary inline-flex h-10 w-10 items-center justify-center p-0" aria-label="Agregar fila" title="Agregar fila">
@@ -698,20 +748,29 @@ new #[Layout('layouts.panel')] class extends Component
                         <path d="M5 12h14" />
                     </svg>
                 </button>
-                <button type="button" id="ampliar-tabla" class="btn-secondary inline-flex w-auto items-center gap-2" title="Abrir vista ampliada">
-                    <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <button type="button" id="ampliar-tabla" class="btn-secondary inline-flex h-10 w-10 items-center justify-center p-0" aria-label="Abrir vista ampliada" title="Abrir vista ampliada">
+                    <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M8 3H5a2 2 0 0 0-2 2v3" />
                         <path d="M16 3h3a2 2 0 0 1 2 2v3" />
                         <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
                         <path d="M3 16v3a2 2 0 0 0 2 2h3" />
                     </svg>
-                    <span>Ampliar tabla</span>
                 </button>
-                <label class="btn-secondary w-auto cursor-pointer">
-                    Importar Excel
+                <label class="btn-secondary inline-flex h-10 w-10 cursor-pointer items-center justify-center p-0" aria-label="Importar Excel" title="Importar Excel">
+                    <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <path d="m17 8-5-5-5 5" />
+                        <path d="M12 3v12" />
+                    </svg>
                     <input id="importar-candidatos" type="file" accept=".xlsx,.xls,.csv" class="hidden">
                 </label>
-                <button type="submit" form="reclutamiento-form" class="btn-primary w-auto">Guardar cambios</button>
+                <button type="submit" form="reclutamiento-form" class="btn-primary inline-flex h-10 w-10 items-center justify-center p-0" aria-label="Guardar cambios" title="Guardar cambios">
+                    <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
+                        <path d="M17 21v-8H7v8" />
+                        <path d="M7 3v5h8" />
+                    </svg>
+                </button>
             </div>
         </div>
 
@@ -733,7 +792,7 @@ new #[Layout('layouts.panel')] class extends Component
                             <tr>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-500 px-3 py-3 text-center text-white">GESTIÓN</th>
                                 <th colspan="2" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">BASE</th>
-                                <th colspan="6" class="border-b border-slate-200 bg-teal-800 px-3 py-3 text-center text-white">DATOS PRIMARIOS DE GESTIÓN</th>
+                                <th colspan="7" class="border-b border-slate-200 bg-teal-800 px-3 py-3 text-center text-white">DATOS PRIMARIOS DE GESTIÓN</th>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-300 px-3 py-3 text-center text-slate-900">GESTIÓN DE LLAMADAS</th>
                                 <th colspan="6" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">ENTREVISTA</th>
                                 <th rowspan="2" class="border-b border-slate-200 bg-slate-100 px-3 py-3 text-center text-slate-700">ACCIONES</th>
@@ -745,7 +804,8 @@ new #[Layout('layouts.panel')] class extends Component
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Campaña</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">DNI / C.E</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Edad</th>
-                                <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Nombres y apellidos</th>
+                                <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Nombres</th>
+                                <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Apellidos</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Número celular</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Distrito</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Observaciones</th>
@@ -803,11 +863,10 @@ new #[Layout('layouts.panel')] class extends Component
     </div>
 
     @if ($moduloActivo === 'capacitacion')
-        <div class="card-panel">
+        <div class="mt-5">
             <div class="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                     <h3 class="text-xl font-semibold text-slate-900">Proceso de capacitación</h3>
-                    <p class="text-sm text-slate-500">Candidatos que aprobaron la entrevista y están en proceso de capacitación.</p>
                 </div>
             </div>
 
@@ -820,9 +879,13 @@ new #[Layout('layouts.panel')] class extends Component
                         <tr>
                             <th class="px-3 py-2"></th>
                             <th class="px-3 py-2">Nombre</th>
-                            <th class="px-3 py-2">Fecha apto</th>
+                            <th class="px-3 py-2">Capacitación 1</th>
+                            <th class="px-3 py-2">Asistió cap. 1</th>
+                            <th class="px-3 py-2">Obs. 1</th>
+                            <th class="px-3 py-2">Capacitación 2</th>
+                            <th class="px-3 py-2">Asistió cap. 2</th>
+                            <th class="px-3 py-2">Obs. 2</th>
                             <th class="px-3 py-2">Apto</th>
-                            <th class="px-3 py-2">Invitación</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -832,115 +895,211 @@ new #[Layout('layouts.panel')] class extends Component
                             @php($invitacion = $this->invitacionDe($candidato->id))
                             <tr class="reclutamiento-capacitacion-row" wire:key="cap-row-{{ $candidato->id }}">
                                 <td class="px-3 py-2">
-                                    <button type="button" wire:click="toggleCapacitacionExpandido({{ $candidato->id }})" class="text-slate-400 transition hover:text-slate-600" aria-label="Expandir">
+                                    <button type="button" wire:click="toggleCapacitacionExpandido({{ $candidato->id }})" class="relative text-slate-400 transition hover:text-slate-600" aria-label="Expandir">
                                         <svg class="h-4 w-4 {{ $expandido ? 'rotate-90' : '' }} transition" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                                         </svg>
+                                        @if (($valores['asistio_cap_1'] ?? null) === 'REPROGRAMADO' || ($valores['asistio_cap_2'] ?? null) === 'REPROGRAMADO')
+                                            <span class="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" title="Tiene una reprogramación pendiente"></span>
+                                        @endif
                                     </button>
                                 </td>
-                                <td class="px-3 py-2 font-medium text-slate-900">{{ $candidato->nombreCorto() }}</td>
-                                <td class="px-3 py-2 text-slate-500">{{ $candidato->fecha_apto?->format('d/m/Y H:i') ?? '-' }}</td>
+                                <td class="px-3 py-2 font-medium text-slate-900">{{ $candidato->nombreCompleto() }}</td>
                                 <td class="px-3 py-2">
-                                    <x-ui.badge :color="$candidato->apto ? 'green' : 'slate'">{{ $candidato->apto ? 'APTO' : 'NO' }}</x-ui.badge>
+                                    <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_1" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto)>
                                 </td>
-                                <td class="px-3 py-2 text-slate-500">
-                                    {{ $invitacion?->estadoLabel() ?? 'sin generar' }}
+                                <td class="px-3 py-2">
+                                    <div class="flex items-center gap-1.5">
+                                        <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_1" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto || empty($valores['capacitacion_1']))>
+                                            <option value="">-</option>
+                                            @foreach (self::CAPACITACION_ASISTIO_OPTIONS as $opcion)
+                                                <option value="{{ $opcion }}">{{ $opcion }}</option>
+                                            @endforeach
+                                        </select>
+                                        @if (($valores['asistio_cap_1'] ?? null) === 'REPROGRAMADO')
+                                            <span class="reclutamiento-info-badge" tabindex="0" data-tooltip="{{ $this->resumenReprogramacion($valores, '1') }}">i</span>
+                                        @endif
+                                    </div>
+                                </td>
+                                <td class="px-3 py-2">
+                                    <button type="button" data-obs-toggle data-obs-candidato="{{ $candidato->id }}" data-obs-field="obs_1" data-obs-value="{{ $valores['obs_1'] ?? '' }}" data-obs-label="Observación cap. 1" class="reclutamiento-obs-button {{ filled($valores['obs_1'] ?? null) ? 'has-value' : '' }}" @disabled($candidato->apto) aria-label="Observación cap. 1" title="Observación cap. 1">
+                                        <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                        </svg>
+                                    </button>
+                                </td>
+                                <td class="px-3 py-2">
+                                    <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_2" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto || ! $this->puedeCapacitacion2($valores))>
+                                </td>
+                                <td class="px-3 py-2">
+                                    <div class="flex items-center gap-1.5">
+                                        <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_2" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto || empty($valores['capacitacion_2']))>
+                                            <option value="">-</option>
+                                            @foreach (self::CAPACITACION_ASISTIO_OPTIONS as $opcion)
+                                                <option value="{{ $opcion }}">{{ $opcion }}</option>
+                                            @endforeach
+                                        </select>
+                                        @if (($valores['asistio_cap_2'] ?? null) === 'REPROGRAMADO')
+                                            <span class="reclutamiento-info-badge" tabindex="0" data-tooltip="{{ $this->resumenReprogramacion($valores, '2') }}">i</span>
+                                        @endif
+                                    </div>
+                                </td>
+                                <td class="px-3 py-2">
+                                    <button type="button" data-obs-toggle data-obs-candidato="{{ $candidato->id }}" data-obs-field="obs_2" data-obs-value="{{ $valores['obs_2'] ?? '' }}" data-obs-label="Observación cap. 2" class="reclutamiento-obs-button {{ filled($valores['obs_2'] ?? null) ? 'has-value' : '' }}" @disabled($candidato->apto) aria-label="Observación cap. 2" title="Observación cap. 2">
+                                        <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                        </svg>
+                                    </button>
+                                </td>
+                                <td class="px-3 py-2 text-center">
+                                    <input type="checkbox" wire:model="capacitaciones.{{ $candidato->id }}.apto" wire:change="guardarCapacitacion({{ $candidato->id }})" @disabled(! $this->puedeMarcarApto($valores) && ! $candidato->apto)>
                                 </td>
                             </tr>
                             @if ($expandido)
                                 <tr wire:key="cap-panel-{{ $candidato->id }}">
-                                    <td colspan="5" class="p-0">
+                                    <td colspan="9" class="p-0">
                                         <div class="reclutamiento-capacitacion-panel">
-                                            <div>
-                                                <label class="form-label">Capacitación 1</label>
-                                                <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_1" class="form-input" @disabled($candidato->apto)>
-                                            </div>
-                                            <div>
-                                                <label class="form-label">Asistió cap. 1</label>
-                                                <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_1" class="form-input" @disabled($candidato->apto || empty($valores['capacitacion_1']))>
-                                                    <option value="">Seleccionar</option>
-                                                    @foreach (self::CAPACITACION_ASISTIO_OPTIONS as $opcion)
-                                                        <option value="{{ $opcion }}">{{ $opcion }}</option>
-                                                    @endforeach
-                                                </select>
-                                            </div>
-                                            <div class="sm:col-span-2">
-                                                <label class="form-label">Observación cap. 1</label>
-                                                <input type="text" wire:model="capacitaciones.{{ $candidato->id }}.obs_1" class="form-input uppercase" @disabled($candidato->apto)>
-                                            </div>
-
-                                            @if (($valores['asistio_cap_1'] ?? null) === 'REPROGRAMADO')
+                                            <dl class="col-span-full grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                                                 <div>
-                                                    <label class="form-label">Cap. 1 reprogramada</label>
-                                                    <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_1_reprogramada" class="form-input" @disabled($candidato->apto)>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Mes</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->mes ?: '-' }}</dd>
                                                 </div>
                                                 <div>
-                                                    <label class="form-label">Asistió (reprogramada)</label>
-                                                    <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_1_reprogramada" class="form-input" @disabled($candidato->apto)>
-                                                        <option value="">Seleccionar</option>
-                                                        @foreach (self::CAPACITACION_ASISTIO_OPTIONS as $opcion)
-                                                            <option value="{{ $opcion }}">{{ $opcion }}</option>
-                                                        @endforeach
-                                                    </select>
-                                                </div>
-                                            @endif
-
-                                            @if ($this->puedeCapacitacion2($valores))
-                                                <div>
-                                                    <label class="form-label">Capacitación 2</label>
-                                                    <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_2" class="form-input" @disabled($candidato->apto)>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Fecha gestión</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->fecha_gestion?->format('d/m/Y') ?? '-' }}</dd>
                                                 </div>
                                                 <div>
-                                                    <label class="form-label">Asistió cap. 2</label>
-                                                    <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_2" class="form-input" @disabled($candidato->apto || empty($valores['capacitacion_2']))>
-                                                        <option value="">Seleccionar</option>
-                                                        @foreach (self::CAPACITACION_ASISTIO_OPTIONS as $opcion)
-                                                            <option value="{{ $opcion }}">{{ $opcion }}</option>
-                                                        @endforeach
-                                                    </select>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Agente reclutador</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->agente_reclutador ?: '-' }}</dd>
                                                 </div>
-                                                <div class="sm:col-span-2">
-                                                    <label class="form-label">Observación cap. 2</label>
-                                                    <input type="text" wire:model="capacitaciones.{{ $candidato->id }}.obs_2" class="form-input uppercase" @disabled($candidato->apto)>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Campaña</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->campana ?: '-' }}</dd>
                                                 </div>
-
-                                                @if (($valores['asistio_cap_2'] ?? null) === 'REPROGRAMADO')
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">DNI / C.E</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->dni_ce ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Edad</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->edad ?? '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Número celular</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->numero_celular ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Distrito</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->distrito ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Observaciones</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->observaciones ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Tipificación</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->tipificacion ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Subtipificación rechazo</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->subtipificacion_rechazo ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Aceptación entrevista</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->aceptacion_entrevista ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Fecha entrevista</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->fecha_entrevista?->format('d/m/Y') ?? '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Hora de entrevista</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->hora_entrevista ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Asistió entrevista</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->asistio_entrevista ?: '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Fecha reprogramada</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->fecha_reprogramada?->format('d/m/Y') ?? '-' }}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-xs font-semibold uppercase tracking-wide text-slate-400">Asistió ent. rep</dt>
+                                                    <dd class="text-sm text-slate-700">{{ $candidato->asistio_entrevista_reprogramada ?: '-' }}</dd>
+                                                </div>
+                                                @if ($this->puedeGenerarInvitacion($valores))
                                                     <div>
-                                                        <label class="form-label">Cap. 2 reprogramada</label>
-                                                        <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_2_reprogramada" class="form-input" @disabled($candidato->apto)>
-                                                    </div>
-                                                    <div>
-                                                        <label class="form-label">Asistió (reprogramada)</label>
-                                                        <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_2_reprogramada" class="form-input" @disabled($candidato->apto)>
-                                                            <option value="">Seleccionar</option>
-                                                            @foreach (self::CAPACITACION_ASISTIO_OPTIONS as $opcion)
-                                                                <option value="{{ $opcion }}">{{ $opcion }}</option>
-                                                            @endforeach
-                                                        </select>
+                                                        @if ($invitacion)
+                                                            <button type="button" data-invitacion-toggle data-invitacion-link="{{ route('onboarding.form', $invitacion->token) }}" data-invitacion-estado="{{ $invitacion->estadoLabel() }}" data-invitacion-qr="{{ QrCodeGenerator::dataUri(route('onboarding.form', $invitacion->token)) }}" class="btn-secondary w-auto">
+                                                                Ver invitación
+                                                            </button>
+                                                        @else
+                                                            <button type="button" wire:click="generarInvitacionCapacitacion({{ $candidato->id }})" class="btn-secondary w-auto">
+                                                                Generar invitación
+                                                            </button>
+                                                        @endif
                                                     </div>
                                                 @endif
-                                            @endif
+                                            </dl>
 
-                                            <div class="flex items-center gap-2">
-                                                <input type="checkbox" wire:model="capacitaciones.{{ $candidato->id }}.apto" id="apto-{{ $candidato->id }}" @disabled(! $this->puedeMarcarApto($valores) && ! $candidato->apto)>
-                                                <label for="apto-{{ $candidato->id }}" class="text-sm font-medium text-slate-700">Marcar como APTO</label>
-                                            </div>
+                                            @if (($valores['asistio_cap_1'] ?? null) === 'REPROGRAMADO' || ($valores['asistio_cap_2'] ?? null) === 'REPROGRAMADO')
+                                                <div class="col-span-full grid grid-cols-1 gap-6 border-t border-slate-200 pt-4 sm:grid-cols-2">
+                                                    <div>
+                                                        @if (($valores['asistio_cap_1'] ?? null) === 'REPROGRAMADO')
+                                                            <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Capacitación 1 reprogramada</p>
+                                                            <div class="grid grid-cols-2 gap-4">
+                                                                <div>
+                                                                    <label class="form-label">Fecha</label>
+                                                                    <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_1_reprogramada" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto)>
+                                                                </div>
+                                                                <div>
+                                                                    <label class="form-label">Asistió</label>
+                                                                    <div class="flex items-center gap-1.5">
+                                                                        <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_1_reprogramada" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto || empty($valores['capacitacion_1_reprogramada']))>
+                                                                            <option value="">Seleccionar</option>
+                                                                            @foreach (self::CAPACITACION_ASISTIO_REPROGRAMADA_OPTIONS as $opcion)
+                                                                                <option value="{{ $opcion }}">{{ $opcion }}</option>
+                                                                            @endforeach
+                                                                        </select>
+                                                                        <button type="button" data-obs-toggle data-obs-candidato="{{ $candidato->id }}" data-obs-field="obs_1_reprogramada" data-obs-value="{{ $valores['obs_1_reprogramada'] ?? '' }}" data-obs-label="Observación (reprogramada) cap. 1" class="reclutamiento-obs-button shrink-0 {{ filled($valores['obs_1_reprogramada'] ?? null) ? 'has-value' : '' }}" @disabled($candidato->apto) aria-label="Observación (reprogramada) cap. 1" title="Observación (reprogramada) cap. 1">
+                                                                            <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                                                            </svg>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        @endif
+                                                    </div>
 
-                                            <div>
-                                                <button type="button" wire:click="guardarCapacitacion({{ $candidato->id }})" class="btn-secondary w-auto">Guardar capacitación</button>
-                                            </div>
-
-                                            @if ($this->puedeGenerarInvitacion($valores))
-                                                <div class="sm:col-span-2">
-                                                    @if ($invitacion)
-                                                        <button type="button" data-invitacion-toggle data-invitacion-link="{{ route('onboarding.form', $invitacion->token) }}" data-invitacion-estado="{{ $invitacion->estadoLabel() }}" class="btn-secondary w-auto">
-                                                            Ver invitación
-                                                        </button>
-                                                    @else
-                                                        <button type="button" wire:click="generarInvitacionCapacitacion({{ $candidato->id }})" class="btn-secondary w-auto">
-                                                            Generar invitación
-                                                        </button>
-                                                    @endif
+                                                    <div>
+                                                        @if (($valores['asistio_cap_2'] ?? null) === 'REPROGRAMADO')
+                                                            <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Capacitación 2 reprogramada</p>
+                                                            <div class="grid grid-cols-2 gap-4">
+                                                                <div>
+                                                                    <label class="form-label">Fecha</label>
+                                                                    <input type="date" wire:model="capacitaciones.{{ $candidato->id }}.capacitacion_2_reprogramada" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto)>
+                                                                </div>
+                                                                <div>
+                                                                    <label class="form-label">Asistió</label>
+                                                                    <div class="flex items-center gap-1.5">
+                                                                        <select wire:model="capacitaciones.{{ $candidato->id }}.asistio_cap_2_reprogramada" wire:change="guardarCapacitacion({{ $candidato->id }})" class="form-input" @disabled($candidato->apto || empty($valores['capacitacion_2_reprogramada']))>
+                                                                            <option value="">Seleccionar</option>
+                                                                            @foreach (self::CAPACITACION_ASISTIO_REPROGRAMADA_OPTIONS as $opcion)
+                                                                                <option value="{{ $opcion }}">{{ $opcion }}</option>
+                                                                            @endforeach
+                                                                        </select>
+                                                                        <button type="button" data-obs-toggle data-obs-candidato="{{ $candidato->id }}" data-obs-field="obs_2_reprogramada" data-obs-value="{{ $valores['obs_2_reprogramada'] ?? '' }}" data-obs-label="Observación (reprogramada) cap. 2" class="reclutamiento-obs-button shrink-0 {{ filled($valores['obs_2_reprogramada'] ?? null) ? 'has-value' : '' }}" @disabled($candidato->apto) aria-label="Observación (reprogramada) cap. 2" title="Observación (reprogramada) cap. 2">
+                                                                            <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                                                            </svg>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        @endif
+                                                    </div>
                                                 </div>
                                             @endif
                                         </div>
@@ -948,25 +1107,15 @@ new #[Layout('layouts.panel')] class extends Component
                                 </tr>
                             @endif
                         @empty
-                            <tr><td colspan="5" class="py-6 text-center text-slate-400">Aún no hay candidatos en proceso de capacitación.</td></tr>
+                            <tr><td colspan="9" class="py-6 text-center text-slate-400">Aún no hay candidatos en proceso de capacitación.</td></tr>
                         @endforelse
                     </tbody>
                 </table>
             </div>
         </div>
     @endif
-
-    @if ($moduloActivo === 'entrevista')
-        <div class="card-panel">
-            <x-panel.reclutamiento.proximamente titulo="Entrevista" />
-        </div>
-    @endif
-
-    @if ($moduloActivo === 'seguimiento')
-        <div class="card-panel">
-            <x-panel.reclutamiento.proximamente titulo="Seguimiento" />
-        </div>
-    @endif
+    </div>
 
     <div class="reclutamiento-invitacion-popover" id="reclutamiento-invitacion-popover"></div>
+    <div class="reclutamiento-obs-popover" id="capacitacion-obs-popover"></div>
 </div>

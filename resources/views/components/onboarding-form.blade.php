@@ -3,13 +3,13 @@
 use App\Models\Empleado;
 use App\Models\OnboardingInvitation;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Livewire\Component;
 
 new class extends Component
 {
     public OnboardingInvitation $invitacion;
 
-    public bool $enviado = false;
     public bool $invalida = false;
 
     public int $paso = 1;
@@ -368,11 +368,22 @@ new class extends Component
                 'apellido_materno' => 'required|string|max:100',
                 'nombres' => 'required|string|max:100',
                 'fecha_nacimiento' => 'required|date|before:today',
-                'edad' => 'nullable|integer|min:0|max:120',
+                'lugar_nacimiento' => 'required|string|max:150',
+                'edad' => 'required|integer|min:0|max:120',
+                'numero_hijos' => 'required|integer|min:0|max:20',
+                'estado_civil' => 'required|in:soltero,casado,conviviente,divorciado,viudo',
+                'sexo' => 'required|in:F,M',
                 'direccion' => 'required|string|max:255',
+                'vivienda_tipo' => 'required|in:departamento,habitacion,casa',
+                'vivienda_tenencia' => 'required|in:propia,alquilada',
+                'departamento_residencia' => 'required|string',
+                'provincia' => 'required|string',
+                'distrito' => 'required|string',
                 'celular_llamadas' => 'required|string|max:30',
+                'celular_whatsapp' => 'required|string|max:30',
                 'email' => 'required|email|max:150|unique:empleados,email',
                 'contacto_emergencia_nombre' => 'required|string|max:100',
+                'contacto_emergencia_parentesco' => 'required|string|max:100',
                 'contacto_emergencia_telefono' => 'required|string|max:30',
                 'puesto' => 'required|string|max:100',
             ],
@@ -381,15 +392,17 @@ new class extends Component
                 'pension_sistema' => 'nullable|required_if:pension_afiliado,si|in:onp,afp',
                 'pension_afp' => 'nullable|required_if:pension_sistema,afp|in:profuturo,integra,prima,habitat',
             ],
-            3 => [
-                'estudios.0.nivel' => 'required|in:superior,tecnico',
-                'estudios.0.centro_estudios' => 'required|string|max:150',
-            ],
-            4 => [],
-            5 => [],
+            3 => $this->reglasEstudios(),
+            4 => $this->reglasEmpleosAnteriores(),
+            5 => $this->reglasFamiliares(),
             6 => [
                 'salud_antecedentes' => 'required|in:si,no',
                 'salud_enfermedad_actual' => 'required|in:si,no',
+                'salud_enfermedad_detalle' => [
+                    'nullable', 'string', 'max:500',
+                    Rule::requiredIf(fn () => $this->salud_antecedentes === 'si' || $this->salud_enfermedad_actual === 'si'),
+                ],
+                'salud_medicamentos' => 'required|string|max:255',
             ],
             7 => [
                 'declaracion_datos_veraces' => 'required|in:si',
@@ -404,12 +417,97 @@ new class extends Component
         };
     }
 
+    /**
+     * Reglas para una fila "todo o nada": si cualquiera de sus campos viene
+     * lleno, todos los demás campos de esa misma fila pasan a ser requeridos.
+     * Así una fila puede quedar completamente vacía (se descarta al guardar,
+     * ver filasConDatos()) o completamente llena, nunca a medias.
+     */
+    protected function reglasFilaCondicional(string $coleccion, int $indice, array $campos, array $reglasExtra = []): array
+    {
+        $reglas = [];
+
+        foreach ($campos as $campo) {
+            $otros = array_values(array_diff($campos, [$campo]));
+            $otrosConPrefijo = implode(',', array_map(fn ($c) => "{$coleccion}.{$indice}.{$c}", $otros));
+            $extra = $reglasExtra[$campo] ?? null;
+            $reglas["{$coleccion}.{$indice}.{$campo}"] = "required_with:{$otrosConPrefijo}" . ($extra ? "|{$extra}" : '');
+        }
+
+        return $reglas;
+    }
+
+    protected function reglasEstudios(): array
+    {
+        $campos = ['nivel', 'centro_estudios', 'carrera', 'desde', 'hasta', 'grado_obtenido'];
+        $extra = [
+            'nivel' => 'in:superior,tecnico',
+            'centro_estudios' => 'string|max:150',
+            'carrera' => 'string|max:150',
+            'desde' => 'date',
+            'hasta' => 'date',
+            'grado_obtenido' => 'in:cursando,trunco,culminado',
+        ];
+
+        $reglas = [
+            'estudios.0.nivel' => 'required|in:superior,tecnico',
+            'estudios.0.centro_estudios' => 'required|string|max:150',
+            'estudios.0.carrera' => 'required|string|max:150',
+            'estudios.0.desde' => 'required|date',
+            'estudios.0.hasta' => 'required|date|after_or_equal:estudios.0.desde',
+            'estudios.0.grado_obtenido' => 'required|in:cursando,trunco,culminado',
+        ];
+
+        for ($i = 1; $i < count($this->estudios); $i++) {
+            $reglas = array_merge($reglas, $this->reglasFilaCondicional('estudios', $i, $campos, $extra));
+        }
+
+        return $reglas;
+    }
+
+    protected function reglasEmpleosAnteriores(): array
+    {
+        $campos = [
+            'empresa', 'cargo', 'funcion_principal', 'sueldo', 'fecha_inicio',
+            'fecha_termino', 'motivo_cese', 'jefe_nombre', 'jefe_cargo', 'jefe_celular',
+        ];
+        $extra = [
+            'fecha_inicio' => 'date',
+            'fecha_termino' => 'date',
+        ];
+
+        $reglas = [];
+        for ($i = 0; $i < count($this->empleosAnteriores); $i++) {
+            $reglas = array_merge($reglas, $this->reglasFilaCondicional('empleosAnteriores', $i, $campos, $extra));
+        }
+
+        return $reglas;
+    }
+
+    protected function reglasFamiliares(): array
+    {
+        $campos = ['nombres_apellidos', 'parentesco', 'fecha_nacimiento', 'edad', 'ocupacion'];
+        $extra = [
+            'fecha_nacimiento' => 'date',
+            'edad' => 'integer|min:0|max:120',
+        ];
+
+        $reglas = [];
+        for ($i = 0; $i < count($this->familiares); $i++) {
+            $reglas = array_merge($reglas, $this->reglasFilaCondicional('familiares', $i, $campos, $extra));
+        }
+
+        return $reglas;
+    }
+
     protected function todasLasReglas(): array
     {
         return array_merge(
             $this->reglasPaso(1),
             $this->reglasPaso(2),
             $this->reglasPaso(3),
+            $this->reglasPaso(4),
+            $this->reglasPaso(5),
             $this->reglasPaso(6),
             $this->reglasPaso(7),
             $this->reglasPaso(8),
@@ -518,37 +616,33 @@ new class extends Component
             $this->invitacion->update(['usado_en' => now()]);
         });
 
-        $this->enviado = true;
+        session()->flash('onboarding_nombre', $this->nombres);
+        $this->redirect(route('onboarding.enviado'), navigate: false);
     }
 };
 ?>
 
 <div class="page-shell onboarding-ficha">
-    <div class="mx-auto max-w-[920px]">
+    <div class="mx-auto max-w-xl">
         @if ($invalida)
             <x-ui.card centered>
                 <h1 class="text-xl font-semibold text-slate-900">Este enlace no es valido</h1>
                 <p class="mt-2 text-slate-500">El link de registro ya fue usado o ha expirado. Contacta a Recursos Humanos para que te genere uno nuevo.</p>
             </x-ui.card>
-        @elseif ($enviado)
-            <x-ui.card centered>
-                <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
-                    <svg class="h-6 w-6 text-success" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                </div>
-                <h1 class="mt-4 text-xl font-semibold text-slate-900">Registro enviado</h1>
-                <p class="mt-2 text-slate-500">Gracias, {{ $nombres }}. Tus datos fueron enviados a Recursos Humanos correctamente.</p>
-            </x-ui.card>
-        @else
-            <div class="mb-6 text-center">
-                <h1 class="text-2xl font-bold text-slate-900">Ficha de datos personales</h1>
-                <p class="mt-1 text-slate-500">Completa tus datos para incorporarte a la empresa.</p>
-            </div>
+        @endif
+    </div>
 
-            <x-ui.wizard-steps :pasos="$pasos" :actual="$paso" />
+    @unless ($invalida)
+        <div class="mx-auto max-w-[1160px]">
+            <div class="onboarding-shell">
+                <aside class="onboarding-sidebar">
+                    <h1 class="text-xl font-bold text-slate-900">Ficha de datos personales</h1>
+                    <p class="mt-1 text-sm text-slate-500">Completa tus datos para incorporarte a la empresa.</p>
 
-            <div class="card-panel">
+                    <x-ui.wizard-steps-sidebar :pasos="$pasos" :actual="$paso" class="mt-8" />
+                </aside>
+
+                <div class="onboarding-content">
                 @if ($paso === 1)
                     <div class="space-y-6">
                         <x-forms.section title="Puesto al que ingresas">
@@ -564,8 +658,8 @@ new class extends Component
                             <x-forms.field label="Nombres" name="nombres" />
                             <x-forms.field label="Fecha de nacimiento" name="fecha_nacimiento" type="date" />
                             <x-forms.field label="Lugar de nacimiento" name="lugar_nacimiento" />
-                            <x-forms.field label="Edad" name="edad" type="number" />
-                            <x-forms.field label="Nº de hijos" name="numero_hijos" type="number" />
+                            <x-forms.field label="Edad" name="edad" type="number" min="0" max="120" />
+                            <x-forms.field label="Nº de hijos" name="numero_hijos" type="number" min="0" max="20" />
                             <x-forms.choice label="Estado civil" name="estado_civil" :options="[
                                 'soltero' => 'Soltero(a)',
                                 'casado' => 'Casado(a)',
@@ -675,7 +769,10 @@ new class extends Component
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
                             <h3 class="form-section-title">Información familiar (padres, hijos, cónyuge, hermanos)</h3>
-                            <button type="button" wire:click="agregarFamiliar" class="btn-secondary">+ Agregar fila</button>
+                            <button type="button" wire:click="agregarFamiliar" wire:loading.attr="disabled" class="btn-secondary">
+                                <span wire:loading.remove wire:target="agregarFamiliar">+ Agregar fila</span>
+                                <span wire:loading wire:target="agregarFamiliar">Agregando...</span>
+                            </button>
                         </div>
 
                         <div class="overflow-x-auto rounded-xl border border-slate-100">
@@ -696,7 +793,7 @@ new class extends Component
                                             <td><input type="text" wire:model="familiares.{{ $indice }}.nombres_apellidos" class="form-input"></td>
                                             <td><input type="text" wire:model="familiares.{{ $indice }}.parentesco" class="form-input"></td>
                                             <td><input type="date" wire:model="familiares.{{ $indice }}.fecha_nacimiento" class="form-input"></td>
-                                            <td><input type="number" wire:model="familiares.{{ $indice }}.edad" class="form-input"></td>
+                                            <td><input type="number" wire:model="familiares.{{ $indice }}.edad" class="form-input" min="0" max="120"></td>
                                             <td><input type="text" wire:model="familiares.{{ $indice }}.ocupacion" class="form-input"></td>
                                             <td class="text-center">
                                                 @if (count($familiares) > 1)
@@ -736,7 +833,7 @@ new class extends Component
                                 Artículo IV inciso 1.7) "Principio de presunción de veracidad" del Título preliminar de la Ley de
                                 Procedimiento Administrativo General, Ley N° 27444.
                             </p>
-                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_datos_veraces" :options="['si' => 'Sí', 'no' => 'No']" />
+                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_datos_veraces" :options="['si' => 'Sí']" />
                         </div>
 
                         <div class="space-y-2 border-t border-slate-100 pt-4">
@@ -745,7 +842,7 @@ new class extends Component
                                 que laboró a efectuar las verificaciones que juzgue necesarias; asimismo me comprometo a presentar
                                 los documentos que me soliciten.
                             </p>
-                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_autoriza_verificacion" :options="['si' => 'Sí', 'no' => 'No']" />
+                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_autoriza_verificacion" :options="['si' => 'Sí']" />
                         </div>
 
                         <div class="space-y-2 border-t border-slate-100 pt-4">
@@ -756,7 +853,7 @@ new class extends Component
                                 por capacitación. Por otro lado, en caso la empresa determine el retiro del participante por motivos
                                 internos, sí se realizará el abono correspondiente por los días de capacitación efectuados.
                             </p>
-                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_capacitacion_condiciones" :options="['si' => 'Sí', 'no' => 'No']" />
+                            <x-forms.choice label="¿Aceptas esta declaración?" name="declaracion_capacitacion_condiciones" :options="['si' => 'Sí']" />
                         </div>
                     </div>
                 @elseif ($paso === 8)
@@ -803,6 +900,7 @@ new class extends Component
                     @endif
                 </div>
             </div>
-        @endif
-    </div>
+            </div>
+        </div>
+    @endunless
 </div>

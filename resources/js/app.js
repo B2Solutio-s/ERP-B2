@@ -1,4 +1,5 @@
 import './reclutamiento-grid.js';
+import './signature-pad.js';
 
 /**
  * Echo exposes an expressive API for subscribing to channels and listening

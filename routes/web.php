@@ -11,6 +11,10 @@ Route::get('/', function () {
 
 Route::livewire('/alta/{token}', 'onboarding-form')->name('onboarding.form');
 
+Route::get('/alta-enviado', function () {
+    return view('onboarding-enviado', ['nombre' => session('onboarding_nombre', '')]);
+})->name('onboarding.enviado');
+
 Route::livewire('/login', 'auth.login-form')->name('login')->middleware('guest');
 
 Route::post('/logout', function () {

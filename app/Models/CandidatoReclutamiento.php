@@ -106,10 +106,36 @@ class CandidatoReclutamiento extends Model
         return trim("{$primerNombre} {$primerApellido}");
     }
 
+    public function detalleNoAptoCapacitacion(): ?string
+    {
+        if ($this->asistio_cap_2_reprogramada === 'SI, NO APTO') {
+            return 'Capacitación 2 (reprogramada): '.($this->obs_2_reprogramada ?: 'sin observación');
+        }
+
+        if ($this->asistio_cap_2 === 'SI, NO APTO') {
+            return 'Capacitación 2: '.($this->obs_2 ?: 'sin observación');
+        }
+
+        if ($this->asistio_cap_1_reprogramada === 'SI, NO APTO') {
+            return 'Capacitación 1 (reprogramada): '.($this->obs_1_reprogramada ?: 'sin observación');
+        }
+
+        if ($this->asistio_cap_1 === 'SI, NO APTO') {
+            return 'Capacitación 1: '.($this->obs_1 ?: 'sin observación');
+        }
+
+        return null;
+    }
+
+    public function noAptoEnCapacitacion(): bool
+    {
+        return $this->detalleNoAptoCapacitacion() !== null;
+    }
+
     public function findDuplicateByIdentity(): ?self
     {
         $dni = trim((string) ($this->dni_ce ?? ''));
-        $nombre = trim((string) ($this->nombres ?? ''));
+        $nombreCompleto = trim($this->nombreCompleto());
         $telefono = preg_replace('/\D+/', '', (string) ($this->numero_celular ?? ''));
 
         if ($dni !== '') {
@@ -122,9 +148,9 @@ class CandidatoReclutamiento extends Model
             }
         }
 
-        if ($nombre !== '' && $telefono !== '') {
+        if ($nombreCompleto !== '' && $telefono !== '') {
             $duplicate = static::query()
-                ->whereRaw('LOWER(TRIM(COALESCE(nombres, ""))) = ?', [mb_strtolower($nombre)])
+                ->whereRaw('LOWER(TRIM(CONCAT(COALESCE(nombres, ""), " ", COALESCE(apellidos, "")))) = ?', [mb_strtolower($nombreCompleto)])
                 ->whereRaw('REPLACE(REPLACE(REPLACE(numero_celular, " ", ""), "-", ""), "+", "") = ?', [$telefono])
                 ->first();
 
