@@ -53,7 +53,7 @@ const TEXT_FIELDS = new Set([
 ]);
 
 const SELECT_FIELDS = new Set([
-    'mes', 'puesto', 'campana', 'cargo', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
+    'mes', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
     'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
 ]);
 
@@ -77,6 +77,7 @@ const getJsonScript = (id, fallback) => {
 
 const getCampanas = () => getJsonScript('reclutamiento-campanas', []).filter(Boolean).map((value) => String(value).toUpperCase());
 const getPuestos = () => getJsonScript('reclutamiento-puestos', []).filter(Boolean).map((value) => String(value).toUpperCase());
+const getAgentesReclutadores = () => getJsonScript('reclutamiento-agentes', []).filter(Boolean).map((value) => String(value).toUpperCase());
 
 const buscarEnMapa = (mapa, clave) => {
     const entrada = Object.entries(mapa).find(([key]) => key.toUpperCase() === String(clave ?? '').toUpperCase());
@@ -420,25 +421,20 @@ const createCell = (key, value = '', row = {}) => {
         emptyOption.textContent = 'Seleccionar';
         cell.appendChild(emptyOption);
 
-        const options = key === 'mes'
-            ? MONTHS
-            : key === 'puesto'
-                ? getPuestos()
-                : key === 'campana'
-                    ? campanasDelPuesto(row.puesto)
-                    : key === 'cargo'
-                        ? cargosDeLaCampana(row.campana)
-                        : key === 'distrito'
-                            ? DISTRICTS
-                            : key === 'tipificacion'
-                                ? getTipificacionOptions()
-                                : key === 'subtipificacion_rechazo'
-                                    ? getSubtipificacionOptions()
-                                    : key === 'asistio_entrevista'
-                                        ? getAsistioOptions()
-                                        : key === 'asistio_entrevista_reprogramada'
-                                            ? getAsistioReprogramadaOptions()
-                                            : ['SI', 'NO'];
+        const opcionesPorCampo = {
+            mes: () => MONTHS,
+            agente_reclutador: () => getAgentesReclutadores(),
+            puesto: () => getPuestos(),
+            campana: () => campanasDelPuesto(row.puesto),
+            cargo: () => cargosDeLaCampana(row.campana),
+            distrito: () => DISTRICTS,
+            tipificacion: () => getTipificacionOptions(),
+            subtipificacion_rechazo: () => getSubtipificacionOptions(),
+            asistio_entrevista: () => getAsistioOptions(),
+            asistio_entrevista_reprogramada: () => getAsistioReprogramadaOptions(),
+        };
+
+        const options = (opcionesPorCampo[key] ?? (() => ['SI', 'NO']))();
 
         const normalizedValue = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
         const availableOptions = options.includes(normalizedValue) || !normalizedValue
@@ -502,6 +498,21 @@ const applyConditionalFieldLocks = (rowElement) => {
             field.disabled = !tieneNombre;
             if (!tieneNombre && field.value !== '') field.value = '';
         });
+    }
+
+    const aceptacion = fieldAt('aceptacion_entrevista');
+    const fechaEntrevista = fieldAt('fecha_entrevista');
+    const horaEntrevista = fieldAt('hora_entrevista');
+    if (aceptacion && !rowLocked) {
+        const aceptada = aceptacion.value === 'SI';
+        if (fechaEntrevista && !fechaEntrevista.disabled) {
+            fechaEntrevista.disabled = !aceptada;
+            if (!aceptada && fechaEntrevista.value !== '') fechaEntrevista.value = '';
+        }
+        if (horaEntrevista && !horaEntrevista.disabled) {
+            horaEntrevista.disabled = !aceptada;
+            if (!aceptada && horaEntrevista.value !== '') horaEntrevista.value = '';
+        }
     }
 
     const tipificacion = fieldAt('tipificacion');
@@ -615,7 +626,7 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             actualizarCargoEnCascada(input.closest('tr'), row);
         }
 
-        if (key === 'tipificacion' || key === 'asistio_entrevista' || key === 'nombres' || key === 'fecha_reprogramada') {
+        if (key === 'tipificacion' || key === 'asistio_entrevista' || key === 'nombres' || key === 'fecha_reprogramada' || key === 'aceptacion_entrevista') {
             applyConditionalFieldLocks(input.closest('tr'));
             const tr = input.closest('tr');
             if (key === 'tipificacion') {
@@ -624,6 +635,10 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             if (key === 'asistio_entrevista') {
                 row.fecha_reprogramada = tr?.querySelector('[data-field="fecha_reprogramada"]')?.value || '';
                 row.asistio_entrevista_reprogramada = tr?.querySelector('[data-field="asistio_entrevista_reprogramada"]')?.value || '';
+            }
+            if (key === 'aceptacion_entrevista') {
+                row.fecha_entrevista = tr?.querySelector('[data-field="fecha_entrevista"]')?.value || '';
+                row.hora_entrevista = tr?.querySelector('[data-field="hora_entrevista"]')?.value || '';
             }
             if (key === 'nombres') {
                 ['aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista', 'fecha_reprogramada', 'asistio_entrevista_reprogramada'].forEach((entrevistaKey) => {
@@ -792,6 +807,7 @@ const isDateColumn = (column) => ['fecha_gestion', 'fecha_entrevista', 'fecha_re
 
 const getColumnOptionValues = (rows, column) => {
     if (column === 'mes') return MONTHS;
+    if (column === 'agente_reclutador') return getAgentesReclutadores();
     if (column === 'puesto') return getPuestos();
     if (column === 'campana') return getCampanas();
     if (column === 'cargo') {

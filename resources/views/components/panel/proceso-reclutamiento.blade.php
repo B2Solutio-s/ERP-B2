@@ -2,10 +2,13 @@
 
 use App\Models\CandidatoReclutamiento;
 use App\Models\Campana;
+use App\Models\Empleado;
 use App\Models\Puesto;
+use App\Models\User;
 use App\Models\OnboardingInvitation;
 use App\Events\ReclutamientoActualizado;
 use App\Services\QrCodeGenerator;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Carbon;
 use Livewire\Attributes\Layout;
@@ -25,6 +28,7 @@ new #[Layout('layouts.panel')] class extends Component
     public array $puestos = [];
     public array $campanasPorPuesto = [];
     public array $cargosPorCampana = [];
+    public array $agentesReclutadores = [];
 
     public const TIPIFICACION_OPTIONS = [
         'INTERESADO - APTO',
@@ -80,6 +84,8 @@ new #[Layout('layouts.panel')] class extends Component
     public ?string $capacitacionFechaEntrevistaHasta = null;
     public ?string $capacitacionFiltroApto = null;
 
+    public ?int $fichaModalId = null;
+
     public function mount(): void
     {
         abort_unless(Auth::user()->esGth() || Auth::user()->esAdmin(), 403);
@@ -101,6 +107,13 @@ new #[Layout('layouts.panel')] class extends Component
         $this->cargosPorCampana = Campana::with(['cargos' => fn ($query) => $query->orderBy('nombre')])
             ->get()
             ->mapWithKeys(fn ($campana) => [$campana->nombre => $campana->cargos->pluck('nombre')->values()->all()])
+            ->all();
+
+        $this->agentesReclutadores = User::query()
+            ->where('role', User::ROL_GTH)
+            ->orderBy('name')
+            ->pluck('name')
+            ->values()
             ->all();
     }
 
@@ -737,6 +750,43 @@ new #[Layout('layouts.panel')] class extends Component
     {
         return OnboardingInvitation::where('reclutamiento_candidato_id', $candidatoId)->latest()->first();
     }
+
+    public function abrirFicha(int $empleadoId): void
+    {
+        $this->fichaModalId = $empleadoId;
+    }
+
+    public function cerrarFicha(): void
+    {
+        $this->fichaModalId = null;
+    }
+
+    public function fichaSeleccionada(): ?Empleado
+    {
+        if (! $this->fichaModalId) {
+            return null;
+        }
+
+        return Empleado::with(['estudios', 'empleosAnteriores', 'familiares'])->find($this->fichaModalId);
+    }
+
+    public function descargarFicha(int $empleadoId)
+    {
+        $empleado = Empleado::with(['estudios', 'empleosAnteriores', 'familiares'])->find($empleadoId);
+
+        if (! $empleado) {
+            return;
+        }
+
+        $pdf = Pdf::loadView('pdf.ficha-ingreso', ['empleado' => $empleado]);
+
+        $nombreArchivo = 'ficha-'.str("{$empleado->apellido_paterno}-{$empleado->nombres}")->slug().'.pdf';
+
+        return response()->streamDownload(
+            fn () => print($pdf->output()),
+            $nombreArchivo,
+        );
+    }
 };
 ?>
 
@@ -801,6 +851,7 @@ new #[Layout('layouts.panel')] class extends Component
             <script type="application/json" id="reclutamiento-puestos">@json($puestos)</script>
             <script type="application/json" id="reclutamiento-campanas-por-puesto">@json($campanasPorPuesto)</script>
             <script type="application/json" id="reclutamiento-cargos-por-campana">@json($cargosPorCampana)</script>
+            <script type="application/json" id="reclutamiento-agentes">@json($agentesReclutadores)</script>
             <script type="application/json" id="reclutamiento-tipificacion-options">@json(self::TIPIFICACION_OPTIONS)</script>
             <script type="application/json" id="reclutamiento-subtipificacion-options">@json(self::SUBTIPIFICACION_OPTIONS)</script>
             <script type="application/json" id="reclutamiento-asistio-options">@json(self::ASISTIO_OPTIONS)</script>
@@ -1052,11 +1103,18 @@ new #[Layout('layouts.panel')] class extends Component
                                                     <dd class="text-sm text-slate-700">{{ $candidato->asistio_entrevista_reprogramada ?: '-' }}</dd>
                                                 </div>
                                                 @if ($this->puedeGenerarInvitacion($valores))
-                                                    <div>
+                                                    <div class="flex flex-wrap items-center gap-2">
                                                         @if ($invitacion)
-                                                            <button type="button" data-invitacion-toggle data-invitacion-link="{{ route('onboarding.form', $invitacion->token) }}" data-invitacion-estado="{{ $invitacion->estadoLabel() }}" data-invitacion-qr="{{ QrCodeGenerator::dataUri(route('onboarding.form', $invitacion->token)) }}" class="btn-secondary w-auto">
-                                                                Ver invitación
-                                                            </button>
+                                                            @if ($invitacion->empleado)
+                                                                <button type="button" wire:click="abrirFicha({{ $invitacion->empleado->id }})" class="btn-secondary w-auto">
+                                                                    Ver
+                                                                </button>
+                                                                <span class="badge badge-green">Ficha respondida</span>
+                                                            @else
+                                                                <button type="button" data-invitacion-toggle data-invitacion-link="{{ route('onboarding.form', $invitacion->token) }}" data-invitacion-estado="{{ $invitacion->estadoLabel() }}" data-invitacion-qr="{{ QrCodeGenerator::dataUri(route('onboarding.form', $invitacion->token)) }}" class="btn-secondary w-auto">
+                                                                    Ver invitación
+                                                                </button>
+                                                            @endif
                                                         @else
                                                             <button type="button" wire:click="generarInvitacionCapacitacion({{ $candidato->id }})" class="btn-secondary w-auto">
                                                                 Generar invitación
@@ -1141,4 +1199,34 @@ new #[Layout('layouts.panel')] class extends Component
 
     <div class="reclutamiento-invitacion-popover" id="reclutamiento-invitacion-popover"></div>
     <div class="reclutamiento-obs-popover" id="capacitacion-obs-popover"></div>
+
+    @if ($this->fichaSeleccionada())
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+            <div class="flex h-[min(92vh,900px)] w-full max-w-[min(96vw,900px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div class="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                    <h3 class="text-lg font-semibold text-slate-900">Ficha de datos personales</h3>
+                    <div class="flex items-center gap-2">
+                        <button
+                            type="button"
+                            wire:click="descargarFicha({{ $this->fichaSeleccionada()->id }})"
+                            wire:loading.attr="disabled"
+                            wire:target="descargarFicha({{ $this->fichaSeleccionada()->id }})"
+                            class="btn-secondary w-auto"
+                        >
+                            <span wire:loading.remove wire:target="descargarFicha({{ $this->fichaSeleccionada()->id }})">Descargar PDF</span>
+                            <span wire:loading wire:target="descargarFicha({{ $this->fichaSeleccionada()->id }})">Generando...</span>
+                        </button>
+                        <button type="button" wire:click="cerrarFicha" class="text-slate-400 transition hover:text-slate-600" aria-label="Cerrar">
+                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-6">
+                    <x-panel.ficha-ingreso :empleado="$this->fichaSeleccionada()" />
+                </div>
+            </div>
+        </div>
+    @endif
 </div>

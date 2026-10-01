@@ -40,6 +40,8 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $pestanaDatosModal = 'datos';
 
+    public string $cusppEdit = '';
+
     public string $contratoPuesto = '';
 
     public string $contratoRemuneracion = '';
@@ -174,12 +176,32 @@ new #[Layout('layouts.panel')] class extends Component
     public function abrirDatos(int $candidatoId): void
     {
         $this->datosModalId = $candidatoId;
+
+        $candidato = CandidatoReclutamiento::find($candidatoId);
+        $this->cusppEdit = (string) ($candidato ? $this->invitacionDe($candidato)?->empleado?->pension_cuspp : '');
     }
 
     public function cerrarDatos(): void
     {
         $this->datosModalId = null;
         $this->pestanaDatosModal = 'datos';
+        $this->cusppEdit = '';
+    }
+
+    public function guardarCuspp(): void
+    {
+        $candidato = $this->candidatoParaDatos();
+        $empleado = $candidato ? $this->invitacionDe($candidato)?->empleado : null;
+
+        if (! $empleado) {
+            return;
+        }
+
+        $this->validate(['cusppEdit' => ['nullable', 'string', 'max:50']], [], ['cusppEdit' => 'Código CUSPP']);
+
+        $valor = trim($this->cusppEdit) !== '' ? mb_strtoupper(trim($this->cusppEdit)) : null;
+        $empleado->update(['pension_cuspp' => $valor]);
+        $this->cusppEdit = (string) $valor;
     }
 
     public function seleccionarPestanaDatos(string $pestana): void
@@ -464,7 +486,6 @@ new #[Layout('layouts.panel')] class extends Component
             '¿Afiliado?' => $siNo($empleado->pension_afiliado),
             'Sistema' => $empleado->pension_sistema ? strtoupper($empleado->pension_sistema) : null,
             'AFP' => $empleado->pension_afp ? ucfirst($empleado->pension_afp) : null,
-            'Código CUSPP' => $empleado->pension_cuspp,
         ]);
 
         foreach ($empleado->estudios as $indice => $estudio) {
@@ -632,10 +653,7 @@ new #[Layout('layouts.panel')] class extends Component
     </div>
 
     @if ($this->empleadoSeleccionado())
-        <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
-            wire:click.self="cerrarFicha"
-        >
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
             <div class="flex h-[min(92vh,900px)] w-full max-w-[min(96vw,900px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
                 <div class="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
                     <h3 class="text-lg font-semibold text-slate-900">Ficha de datos personales</h3>
@@ -650,8 +668,10 @@ new #[Layout('layouts.panel')] class extends Component
                             <span wire:loading.remove wire:target="descargarFicha({{ $this->empleadoSeleccionado()->id }})">Descargar PDF</span>
                             <span wire:loading wire:target="descargarFicha({{ $this->empleadoSeleccionado()->id }})">Generando...</span>
                         </button>
-                        <button type="button" wire:click="cerrarFicha" class="btn-secondary w-auto" aria-label="Cerrar">
-                            Cerrar
+                        <button type="button" wire:click="cerrarFicha" class="text-slate-400 transition hover:text-slate-600" aria-label="Cerrar">
+                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
                         </button>
                     </div>
                 </div>
@@ -758,6 +778,22 @@ new #[Layout('layouts.panel')] class extends Component
                                             <dd class="text-[11px] text-slate-800">{{ $valor }}</dd>
                                         </div>
                                     @endforeach
+
+                                    @if ($tituloSeccion === 'Sistema pensionario')
+                                        <div class="flex items-end gap-2 pt-1">
+                                            <dt class="w-32 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Código CUSPP</dt>
+                                            <dd class="flex flex-1 items-end gap-2">
+                                                <form wire:submit.prevent="guardarCuspp" class="flex flex-1 items-end gap-2">
+                                                    <input type="text" wire:model="cusppEdit" class="form-input flex-1 py-1 text-[11px]" placeholder="Sin registrar">
+                                                    <button type="submit" wire:loading.attr="disabled" wire:target="guardarCuspp" class="btn-secondary w-auto shrink-0 px-2 py-1 text-[10px]">
+                                                        <span wire:loading.remove wire:target="guardarCuspp">Guardar</span>
+                                                        <span wire:loading wire:target="guardarCuspp">...</span>
+                                                    </button>
+                                                </form>
+                                            </dd>
+                                        </div>
+                                        @error('cusppEdit') <p class="form-error text-[10px]">{{ $message }}</p> @enderror
+                                    @endif
                                 </dl>
                             </div>
                         @endforeach

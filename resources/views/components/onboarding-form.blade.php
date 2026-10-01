@@ -119,6 +119,7 @@ new class extends Component
             $this->celular_llamadas = (string) ($candidato->numero_celular ?? '');
             $this->celular_whatsapp = (string) ($candidato->numero_celular ?? '');
             $this->campana = (string) ($candidato->campana ?? '');
+            $this->fecha_capa = $candidato->capacitacion_1?->format('Y-m-d') ?? '';
 
             $puestoCategoria = trim((string) ($candidato->puesto ?? ''));
             $cargoCandidato = trim((string) ($candidato->cargo ?? ''));
@@ -637,6 +638,14 @@ new class extends Component
         });
 
         session()->flash('onboarding_nombre', $this->nombres);
+
+        // Ya se guardo todo en BD; vaciamos el estado pesado (firma en base64 y
+        // repeaters) para que el snapshot que Livewire manda de vuelta sea minimo.
+        $this->firma_imagen = '';
+        $this->estudios = [];
+        $this->empleosAnteriores = [];
+        $this->familiares = [];
+
         $this->redirect(route('onboarding.enviado'), navigate: false);
     }
 };
@@ -928,4 +937,21 @@ new class extends Component
             </div>
         </div>
     @endunless
+
+    @script
+    <script>
+        // El guardado en BD siempre termina bien (confirmado por logs/DB), pero el
+        // morph/diff del snapshot de este componente (firma en base64 + arrays de
+        // estudios/empleos/familiares) puede reventar en el navegador antes de que
+        // Livewire procese el efecto de redirect, dejando el boton en "Enviando..."
+        // para siempre. Interceptamos la respuesta cruda (antes de ese diff) y
+        // redirigimos a mano si trae un redirect pendiente.
+        Livewire.hook('payload.intercept', (responseJson) => {
+            (responseJson.components ?? []).forEach((componentPayload) => {
+                const url = componentPayload.effects?.redirect;
+                if (url) window.location.href = url;
+            });
+        });
+    </script>
+    @endscript
 </div>

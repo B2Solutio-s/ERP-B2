@@ -16,6 +16,12 @@ window.Echo = new Echo({
 window.Echo.channel('reclutamiento.candidatos')
     .listen('.reclutamiento.actualizado', (payload) => {
         const currentUser = document.getElementById('reclutamiento-usuario');
+
+        // Este canal se suscribe en todas las páginas (mismo bundle de JS), pero los
+        // avisos ("fila bloqueada"/"cambios sincronizados") solo tienen sentido en
+        // Proceso de reclutamiento — ese elemento solo existe en esa página.
+        if (!currentUser) return;
+
         let userId = null;
 
         try {
