@@ -9,7 +9,7 @@ class EmpleadoDocumentoCese extends Model
     protected $table = 'empleado_documentos_cese';
 
     protected $fillable = [
-        'empleado_id',
+        'periodo_id',
         'tipo',
         'nombre_original',
         'ruta',
@@ -18,9 +18,9 @@ class EmpleadoDocumentoCese extends Model
         'subido_por_id',
     ];
 
-    public function empleado()
+    public function periodo()
     {
-        return $this->belongsTo(Empleado::class);
+        return $this->belongsTo(EmpleadoPeriodoContrato::class, 'periodo_id');
     }
 
     public function subidoPor()

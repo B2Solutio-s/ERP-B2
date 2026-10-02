@@ -7,6 +7,7 @@ use App\Models\Campana;
 use App\Models\Cargo;
 use App\Models\Empleado;
 use App\Models\EmpleadoDocumentoCese;
+use App\Models\EmpleadoPeriodoContrato;
 use App\Models\OnboardingInvitation;
 use App\Models\Puesto;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -55,8 +56,6 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $contratoCargo = '';
 
-    public string $contratoDuracion = '';
-
     public string $contratoAreaPracticas = '';
 
     public string $contratoUniversidad = '';
@@ -71,9 +70,7 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $contratoFechaFirma = '';
 
-    public string $contratoPeriodo = '';
-
-    public bool $contratoCese = false;
+    public ?int $periodoCeseActivoId = null;
 
     public string $contratoCeseFecha = '';
 
@@ -81,6 +78,12 @@ new #[Layout('layouts.panel')] class extends Component
 
     /** @var array<string, \Livewire\Features\SupportFileUploads\TemporaryUploadedFile|null> */
     public array $documentosCeseNuevos = [];
+
+    public bool $mostrarFormularioRenovacion = false;
+
+    public string $nuevoPeriodoFechaInicio = '';
+
+    public string $nuevoPeriodoDuracion = '';
 
     public function mount(): void
     {
@@ -168,7 +171,7 @@ new #[Layout('layouts.panel')] class extends Component
         $documento->delete();
     }
 
-    private function empleadoActual(): ?Empleado
+    public function empleadoActual(): ?Empleado
     {
         $candidato = $this->candidatoParaDatos();
 
@@ -220,9 +223,42 @@ new #[Layout('layouts.panel')] class extends Component
         unset($this->documentosCeseNuevos[$tipo]);
     }
 
-    public function documentosCeseDe(Empleado $empleado): array
+    private function periodoCeseActivo(): ?EmpleadoPeriodoContrato
     {
-        $existentes = EmpleadoDocumentoCese::where('empleado_id', $empleado->id)
+        if (! $this->periodoCeseActivoId) {
+            return null;
+        }
+
+        $empleado = $this->empleadoActual();
+
+        if (! $empleado) {
+            return null;
+        }
+
+        return EmpleadoPeriodoContrato::where('id', $this->periodoCeseActivoId)
+            ->where('empleado_id', $empleado->id)
+            ->first();
+    }
+
+    public function abrirCeseDePeriodo(int $periodoId): void
+    {
+        $this->periodoCeseActivoId = $periodoId;
+        $this->contratoCeseFecha = now()->format('Y-m-d');
+        $this->contratoCeseTipo = '';
+        $this->documentosCeseNuevos = [];
+    }
+
+    public function cerrarCeseDePeriodo(): void
+    {
+        $this->periodoCeseActivoId = null;
+        $this->contratoCeseFecha = '';
+        $this->contratoCeseTipo = '';
+        $this->documentosCeseNuevos = [];
+    }
+
+    public function documentosCeseDe(EmpleadoPeriodoContrato $periodo): array
+    {
+        $existentes = EmpleadoDocumentoCese::where('periodo_id', $periodo->id)
             ->get()
             ->keyBy('tipo');
 
@@ -236,10 +272,10 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function guardarDocumentoCese(string $tipo): void
     {
-        $empleado = $this->empleadoActual();
+        $periodo = $this->periodoCeseActivo();
         $archivo = $this->documentosCeseNuevos[$tipo] ?? null;
 
-        if (! $empleado || ! $archivo || ! array_key_exists($tipo, $this->documentosCeseDisponibles())) {
+        if (! $periodo || ! $archivo || ! array_key_exists($tipo, $this->documentosCeseDisponibles())) {
             return;
         }
 
@@ -247,7 +283,7 @@ new #[Layout('layouts.panel')] class extends Component
             "documentosCeseNuevos.{$tipo}" => 'required|file|mimes:pdf,doc,docx|max:8192',
         ]);
 
-        $existente = EmpleadoDocumentoCese::where('empleado_id', $empleado->id)
+        $existente = EmpleadoDocumentoCese::where('periodo_id', $periodo->id)
             ->where('tipo', $tipo)
             ->first();
 
@@ -255,10 +291,10 @@ new #[Layout('layouts.panel')] class extends Component
             Storage::disk('local')->delete($existente->ruta);
         }
 
-        $ruta = $archivo->store("empleado-documentos-cese/{$empleado->id}", 'local');
+        $ruta = $archivo->store("empleado-documentos-cese/{$periodo->id}", 'local');
 
         EmpleadoDocumentoCese::updateOrCreate(
-            ['empleado_id' => $empleado->id, 'tipo' => $tipo],
+            ['periodo_id' => $periodo->id, 'tipo' => $tipo],
             [
                 'nombre_original' => $archivo->getClientOriginalName(),
                 'ruta' => $ruta,
@@ -283,7 +319,44 @@ new #[Layout('layouts.panel')] class extends Component
         $documento->delete();
     }
 
-    public function guardarEstadoContrato(): void
+    public function registrarPeriodoPrueba(): void
+    {
+        $empleado = $this->empleadoActual();
+
+        if (! $empleado) {
+            return;
+        }
+
+        $inicio = $this->contratoFechaInicio !== '' ? $this->contratoFechaInicio : now()->format('Y-m-d');
+        $fechaInicio = Carbon::parse($inicio);
+
+        $empleado->periodosContrato()->create([
+            'tipo' => 'prueba',
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaInicio->copy()->addMonths(3),
+        ]);
+    }
+
+    public function mostrarRenovacion(): void
+    {
+        $empleado = $this->empleadoActual();
+        $ultimoPeriodo = $empleado?->periodosContrato->first();
+
+        $this->nuevoPeriodoFechaInicio = $ultimoPeriodo
+            ? $ultimoPeriodo->fecha_fin->copy()->addDay()->format('Y-m-d')
+            : now()->format('Y-m-d');
+        $this->nuevoPeriodoDuracion = '';
+        $this->mostrarFormularioRenovacion = true;
+    }
+
+    public function cancelarRenovacion(): void
+    {
+        $this->mostrarFormularioRenovacion = false;
+        $this->nuevoPeriodoFechaInicio = '';
+        $this->nuevoPeriodoDuracion = '';
+    }
+
+    public function registrarPeriodoRenovacion(): void
     {
         $empleado = $this->empleadoActual();
 
@@ -292,31 +365,65 @@ new #[Layout('layouts.panel')] class extends Component
         }
 
         $this->validate([
-            'contratoPeriodo' => 'required|in:prueba,renovacion',
-            'contratoCese' => 'boolean',
-            'contratoCeseFecha' => $this->contratoCese ? 'required|date' : 'nullable|date',
-            'contratoCeseTipo' => $this->contratoCese ? 'required|in:renuncia,despido,vencimiento' : 'nullable|in:renuncia,despido,vencimiento',
+            'nuevoPeriodoFechaInicio' => 'required|date',
+            'nuevoPeriodoDuracion' => 'required|integer|min:1|max:60',
         ], [], [
-            'contratoPeriodo' => 'período',
+            'nuevoPeriodoFechaInicio' => 'fecha de inicio',
+            'nuevoPeriodoDuracion' => 'duración',
+        ]);
+
+        $fechaInicio = Carbon::parse($this->nuevoPeriodoFechaInicio);
+
+        $empleado->periodosContrato()->create([
+            'tipo' => 'renovacion',
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaInicio->copy()->addMonths((int) $this->nuevoPeriodoDuracion),
+            'duracion_meses' => (int) $this->nuevoPeriodoDuracion,
+        ]);
+
+        $this->cancelarRenovacion();
+    }
+
+    public function guardarCeseDePeriodo(): void
+    {
+        $periodo = $this->periodoCeseActivo();
+
+        if (! $periodo) {
+            return;
+        }
+
+        $this->validate([
+            'contratoCeseFecha' => 'required|date',
+            'contratoCeseTipo' => 'required|in:renuncia,despido,vencimiento',
+        ], [], [
             'contratoCeseFecha' => 'fecha de cese',
             'contratoCeseTipo' => 'tipo de cese',
         ]);
 
-        $empleado->update([
-            'contrato_periodo' => $this->contratoPeriodo,
-            'contrato_cese' => $this->contratoCese,
-            'contrato_cese_periodo' => $this->contratoCese ? $this->contratoPeriodo : null,
-            'contrato_cese_tipo' => $this->contratoCese ? $this->contratoCeseTipo : null,
-            'contrato_cese_fecha' => $this->contratoCese ? $this->contratoCeseFecha : null,
+        $periodo->update([
+            'cese' => true,
+            'cese_tipo' => $this->contratoCeseTipo,
+            'cese_fecha' => $this->contratoCeseFecha,
         ]);
+    }
+
+    public function estadoPeriodoLabel(string $estado): array
+    {
+        return match ($estado) {
+            'activo' => ['label' => 'Activo', 'clase' => 'bg-emerald-50 text-emerald-700'],
+            'por_vencer' => ['label' => 'Por vencer', 'clase' => 'bg-amber-50 text-amber-700'],
+            'vencido' => ['label' => 'Vencido', 'clase' => 'bg-slate-100 text-slate-600'],
+            'cesado' => ['label' => 'Cesado', 'clase' => 'bg-rose-50 text-rose-700'],
+            default => ['label' => ucfirst($estado), 'clase' => 'bg-slate-100 text-slate-600'],
+        };
     }
 
     public function generarDocumentoCese(string $tipo)
     {
-        $empleado = $this->empleadoActual();
+        $periodo = $this->periodoCeseActivo();
         $plantilla = $this->ceseePlantillaInfo($tipo);
 
-        if (! $empleado || ! $plantilla) {
+        if (! $periodo || ! $plantilla) {
             return;
         }
 
@@ -326,6 +433,7 @@ new #[Layout('layouts.panel')] class extends Component
             return;
         }
 
+        $empleado = $periodo->empleado;
         $nombreCompleto = trim("{$empleado->apellido_paterno} {$empleado->apellido_materno} {$empleado->nombres}");
 
         // Placeholders provisionales mientras no llega la plantilla real;
@@ -437,7 +545,6 @@ new #[Layout('layouts.panel')] class extends Component
         $this->contratoPuesto = $empleado?->contrato_puesto ?? $empleado?->puesto ?? '';
         $this->contratoCampana = $empleado?->contrato_campana ?? $empleado?->campana ?? '';
         $this->contratoCargo = $empleado?->contrato_cargo ?? $empleado?->cargo ?? '';
-        $this->contratoDuracion = $empleado?->contrato_duracion ? preg_replace('/\D+/', '', $empleado->contrato_duracion) : '';
         $this->contratoAreaPracticas = $empleado?->contrato_area_practicas ?? '';
         $this->contratoUniversidad = $empleado?->contrato_universidad ?? '';
         $this->contratoRemuneracion = $empleado?->contrato_remuneracion !== null ? (string) $empleado->contrato_remuneracion : '';
@@ -445,10 +552,10 @@ new #[Layout('layouts.panel')] class extends Component
         $this->contratoFechaInicio = $empleado?->contrato_fecha_inicio?->format('Y-m-d') ?? '';
         $this->contratoFechaFin = $empleado?->contrato_fecha_fin?->format('Y-m-d') ?? '';
         $this->contratoFechaFirma = $empleado?->contrato_fecha_firma?->format('Y-m-d') ?? now()->format('Y-m-d');
-        $this->contratoPeriodo = $empleado?->contrato_periodo ?? '';
-        $this->contratoCese = (bool) $empleado?->contrato_cese;
-        $this->contratoCeseFecha = $empleado?->contrato_cese_fecha?->format('Y-m-d') ?? '';
-        $this->contratoCeseTipo = $empleado?->contrato_cese_tipo ?? '';
+        $this->periodoCeseActivoId = null;
+        $this->contratoCeseFecha = '';
+        $this->contratoCeseTipo = '';
+        $this->mostrarFormularioRenovacion = false;
     }
 
     public function updatedContratoArea(): void
@@ -551,7 +658,6 @@ new #[Layout('layouts.panel')] class extends Component
         $area = $this->contratoAreaModelo();
         $tipo = $this->contratoTipo();
 
-        $this->contratoDuracion = trim($this->contratoDuracion);
         $this->contratoAreaPracticas = mb_strtoupper(trim($this->contratoAreaPracticas));
         $this->contratoUniversidad = mb_strtoupper(trim($this->contratoUniversidad));
 
@@ -560,7 +666,6 @@ new #[Layout('layouts.panel')] class extends Component
             'contratoPuesto' => 'required|string|max:150',
             'contratoCampana' => $area?->usa_campana ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoCargo' => $area?->usa_cargo ? 'required|string|max:150' : 'nullable|string|max:150',
-            'contratoDuracion' => $tipo === 'administrativo' ? 'required|integer|min:1|max:60' : 'nullable|integer|min:1|max:60',
             'contratoAreaPracticas' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoUniversidad' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoRemuneracion' => $tipo === 'practicas' ? 'nullable|numeric|min:0' : 'required|numeric|min:0',
@@ -573,7 +678,6 @@ new #[Layout('layouts.panel')] class extends Component
             'contratoPuesto' => 'puesto',
             'contratoCampana' => 'campaña',
             'contratoCargo' => 'cargo',
-            'contratoDuracion' => 'duración',
             'contratoAreaPracticas' => 'área de prácticas',
             'contratoUniversidad' => 'universidad',
             'contratoRemuneracion' => $tipo === 'practicas' ? 'subvención' : 'remuneración',
@@ -584,7 +688,9 @@ new #[Layout('layouts.panel')] class extends Component
         ]);
 
         $plantilla = $this->contratoPlantillaInfo();
-        $duracionTexto = $this->contratoDuracion !== '' ? $this->contratoDuracion.' MESES' : '';
+        $periodoVigente = $empleado->periodosContrato()->where('tipo', 'renovacion')->where('cese', false)->latest('fecha_inicio')->first();
+        $duracionMeses = $periodoVigente?->duracion_meses ?? 3;
+        $duracionTexto = $duracionMeses.' MESES';
 
         $empleado->update([
             'contrato_area' => $this->contratoArea,
@@ -1160,11 +1266,18 @@ new #[Layout('layouts.panel')] class extends Component
                                 @php($contratoTipoActual = $this->contratoTipo())
 
                                 @if ($contratoPlantilla)
-                                    <div class="sm:col-span-2 rounded-lg {{ $contratoPlantilla['existe'] ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700' }} px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide">
-                                        Tipo: {{ $contratoPlantilla['label'] }}
-                                        @unless ($contratoPlantilla['existe'])
-                                            — plantilla pendiente de subir
-                                        @endunless
+                                    <div class="sm:col-span-2 flex items-center justify-between gap-2 rounded-lg {{ $contratoPlantilla['existe'] ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700' }} px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide">
+                                        <span>
+                                            Tipo: {{ $contratoPlantilla['label'] }}
+                                            @unless ($contratoPlantilla['existe'])
+                                                — plantilla pendiente de subir
+                                            @endunless
+                                        </span>
+                                        @if (! $this->empleadoActual()?->periodosContrato->count())
+                                            <button type="button" wire:click="registrarPeriodoPrueba" wire:loading.attr="disabled" class="btn-secondary shrink-0 py-1 text-[10px]">
+                                                Registrar prueba (3 meses)
+                                            </button>
+                                        @endif
                                     </div>
                                 @endif
 
@@ -1178,17 +1291,6 @@ new #[Layout('layouts.panel')] class extends Component
                                         <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Área de prácticas</label>
                                         <input type="text" wire:model="contratoAreaPracticas" class="form-input py-1.5 text-[11px] uppercase" placeholder="Ej. Tecnología de la información">
                                         @error('contratoAreaPracticas') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
-                                    </div>
-                                @endif
-
-                                @if ($contratoTipoActual === 'administrativo')
-                                    <div class="sm:col-span-2">
-                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración (contrato, en meses)</label>
-                                        <div class="relative">
-                                            <input type="number" min="1" max="60" step="1" wire:model="contratoDuracion" class="form-input py-1.5 pr-14 text-[11px]" placeholder="Ej. 6">
-                                            <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">meses</span>
-                                        </div>
-                                        @error('contratoDuracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                     </div>
                                 @endif
 
@@ -1236,135 +1338,196 @@ new #[Layout('layouts.panel')] class extends Component
                             </button>
                         </div>
 
+                        @php($empleadoHistorial = $this->empleadoActual())
+                        @php($periodosHistorial = $empleadoHistorial?->periodosContrato ?? collect())
+
                         <div class="mx-auto mt-4 max-w-md rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                            <p class="mb-3 text-[11px] font-bold uppercase tracking-wide text-sky-700">Estado del contrato</p>
-
-                            <x-forms.choice label="Período actual" name="contratoPeriodo" :options="['prueba' => 'Prueba', 'renovacion' => 'Renovación']" :live="true" span />
-
-                            <label class="mt-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                                <input type="checkbox" wire:model.live="contratoCese" class="h-3.5 w-3.5 rounded border-slate-300">
-                                Cese
-                            </label>
-
-                            @if ($contratoCese)
-                                <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <div class="sm:col-span-2">
-                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Fecha de cese</label>
-                                        <input type="date" wire:model="contratoCeseFecha" class="form-input py-1.5 text-[11px]">
-                                        @error('contratoCeseFecha') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
-                                    </div>
-
-                                    <x-forms.choice
-                                        label="Tipo de cese"
-                                        name="contratoCeseTipo"
-                                        :options="['renuncia' => 'Renuncia voluntaria', 'despido' => 'Despido', 'vencimiento' => 'Vencimiento de contrato']"
-                                        :live="true"
-                                        span
-                                    />
-                                </div>
-
-                                @if ($contratoCeseTipo)
-                                    @php($empleadoCese = $this->empleadoActual())
-                                    @php($documentosCese = $empleadoCese ? $this->documentosCeseDe($empleadoCese) : [])
-
-                                    <div class="mt-3 space-y-2">
-                                        @foreach ($this->documentosCeseDisponibles() as $tipoDoc => $infoDoc)
-                                            <div class="rounded-lg border border-slate-200 p-2.5">
-                                                <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{{ $infoDoc['label'] }}</p>
-
-                                                @if ($infoDoc['modo'] === 'generar')
-                                                    @php($plantillaDoc = $this->ceseePlantillaInfo($tipoDoc))
-                                                    <button
-                                                        type="button"
-                                                        wire:click="generarDocumentoCese('{{ $tipoDoc }}')"
-                                                        wire:loading.attr="disabled"
-                                                        wire:target="generarDocumentoCese('{{ $tipoDoc }}')"
-                                                        class="btn-secondary w-full py-1 text-[10px]"
-                                                        @disabled(! ($plantillaDoc['existe'] ?? false))
-                                                    >
-                                                        {{ $plantillaDoc && $plantillaDoc['existe'] ? 'Descargar' : 'Plantilla pendiente de subir' }}
-                                                    </button>
-                                                @else
-                                                    @if ($infoDoc['modo'] === 'generar_y_firmar')
-                                                        @php($plantillaDoc = $this->ceseePlantillaInfo($tipoDoc))
-                                                        <button
-                                                            type="button"
-                                                            wire:click="generarDocumentoCese('{{ $tipoDoc }}')"
-                                                            wire:loading.attr="disabled"
-                                                            wire:target="generarDocumentoCese('{{ $tipoDoc }}')"
-                                                            class="btn-secondary mb-1.5 w-full py-1 text-[10px]"
-                                                            @disabled(! ($plantillaDoc['existe'] ?? false))
-                                                        >
-                                                            {{ $plantillaDoc && $plantillaDoc['existe'] ? 'Generar borrador' : 'Plantilla pendiente de subir' }}
-                                                        </button>
-                                                    @endif
-
-                                                    @php($documentoSubido = $documentosCese[$tipoDoc] ?? null)
-                                                    @php($pendienteCese = $documentosCeseNuevos[$tipoDoc] ?? null)
-
-                                                    @if ($pendienteCese)
-                                                        <p class="truncate text-[10px] text-slate-500" title="{{ $pendienteCese->getClientOriginalName() }}">{{ $pendienteCese->getClientOriginalName() }}</p>
-                                                        <div class="mt-1.5 flex items-center gap-2">
-                                                            <button type="button" wire:click="guardarDocumentoCese('{{ $tipoDoc }}')" wire:loading.attr="disabled" class="btn-secondary flex-1 py-1 text-[10px]">
-                                                                Guardar
-                                                            </button>
-                                                            <button type="button" wire:click="cancelarDocumentoCese('{{ $tipoDoc }}')" class="shrink-0 text-[10px] text-slate-400 hover:text-rose-500">
-                                                                Cancelar
-                                                            </button>
-                                                        </div>
-                                                        @error('documentosCeseNuevos.'.$tipoDoc) <p class="mt-1 text-[10px] text-rose-500">{{ $message }}</p> @enderror
-                                                    @elseif ($documentoSubido)
-                                                        <div class="flex items-center justify-between gap-2">
-                                                            <a href="{{ route('registro-ingresos.documento-cese', $documentoSubido->id) }}" target="_blank" class="truncate text-[10px] text-sky-700 hover:underline" title="{{ $documentoSubido->nombre_original }}">
-                                                                {{ $documentoSubido->nombre_original }}
-                                                            </a>
-                                                            <div class="flex shrink-0 items-center gap-2">
-                                                                <label class="cursor-pointer text-[10px] text-sky-700 hover:underline">
-                                                                    Reemplazar
-                                                                    <input type="file" wire:model="documentosCeseNuevos.{{ $tipoDoc }}" class="hidden" accept="application/pdf,.doc,.docx">
-                                                                </label>
-                                                                <button
-                                                                    type="button"
-                                                                    wire:click="eliminarDocumentoCese({{ $documentoSubido->id }})"
-                                                                    wire:confirm="¿Eliminar este documento?"
-                                                                    class="text-rose-400 transition hover:text-rose-600"
-                                                                    aria-label="Eliminar documento"
-                                                                    title="Eliminar"
-                                                                >
-                                                                    <svg aria-hidden="true" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4h8v2m1 0-1 14H6L5 6" />
-                                                                    </svg>
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    @else
-                                                        <label class="btn-secondary block w-full cursor-pointer py-1 text-center text-[10px]">
-                                                            Subir archivo
-                                                            <input type="file" wire:model="documentosCeseNuevos.{{ $tipoDoc }}" class="hidden" accept="application/pdf,.doc,.docx">
-                                                        </label>
-                                                        @error('documentosCeseNuevos.'.$tipoDoc) <p class="mt-1 text-[10px] text-rose-500">{{ $message }}</p> @enderror
-                                                    @endif
-
-                                                    <div wire:loading wire:target="documentosCeseNuevos.{{ $tipoDoc }}" class="mt-1 text-[10px] text-slate-400">
-                                                        Subiendo...
-                                                    </div>
-                                                @endif
-                                            </div>
-                                        @endforeach
-                                    </div>
+                            <div class="mb-3 flex items-center justify-between">
+                                <p class="text-[11px] font-bold uppercase tracking-wide text-sky-700">Historial de contrato</p>
+                                @if ($periodosHistorial->isNotEmpty() && ! $periodosHistorial->first()->cese)
+                                    <button type="button" wire:click="mostrarRenovacion" class="text-[10px] font-semibold text-sky-700 hover:underline">
+                                        + Registrar renovación
+                                    </button>
                                 @endif
+                            </div>
+
+                            @if ($mostrarFormularioRenovacion)
+                                <div class="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <div>
+                                            <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Fecha inicio</label>
+                                            <input type="date" wire:model="nuevoPeriodoFechaInicio" class="form-input py-1.5 text-[11px]">
+                                            @error('nuevoPeriodoFechaInicio') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                        </div>
+                                        <div>
+                                            <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración (meses)</label>
+                                            <input type="number" min="1" max="60" step="1" wire:model="nuevoPeriodoDuracion" class="form-input py-1.5 text-[11px]" placeholder="Ej. 6">
+                                            @error('nuevoPeriodoDuracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                        </div>
+                                    </div>
+                                    <div class="mt-2 flex items-center gap-2">
+                                        <button type="button" wire:click="registrarPeriodoRenovacion" wire:loading.attr="disabled" class="btn-secondary flex-1 py-1 text-[10px]">
+                                            Guardar renovación
+                                        </button>
+                                        <button type="button" wire:click="cancelarRenovacion" class="shrink-0 text-[10px] text-slate-400 hover:text-rose-500">
+                                            Cancelar
+                                        </button>
+                                    </div>
+                                </div>
                             @endif
 
-                            <button
-                                type="button"
-                                wire:click="guardarEstadoContrato"
-                                wire:loading.attr="disabled"
-                                wire:target="guardarEstadoContrato"
-                                class="btn-secondary mt-4 w-full py-1.5 text-[11px]"
-                            >
-                                <span wire:loading.remove wire:target="guardarEstadoContrato">Guardar estado</span>
-                                <span wire:loading wire:target="guardarEstadoContrato">Guardando...</span>
-                            </button>
+                            @forelse ($periodosHistorial as $periodo)
+                                @php($estadoPeriodo = $periodo->estado())
+                                @php($estadoInfo = $this->estadoPeriodoLabel($estadoPeriodo))
+                                <div class="mb-2 rounded-lg border border-slate-200 p-2.5">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                                            {{ $periodo->tipo === 'prueba' ? 'Prueba' : 'Renovación' }}
+                                        </span>
+                                        <span class="rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide {{ $estadoInfo['clase'] }}">
+                                            {{ $estadoInfo['label'] }}
+                                        </span>
+                                    </div>
+                                    <p class="mt-1 text-[10px] text-slate-500">
+                                        {{ $periodo->fecha_inicio->format('d/m/Y') }} — {{ $periodo->fecha_fin->format('d/m/Y') }}
+                                        @if ($periodo->duracion_meses)
+                                            ({{ $periodo->duracion_meses }} meses)
+                                        @endif
+                                    </p>
+
+                                    @if ($periodo->cese)
+                                        <p class="mt-1 text-[10px] text-rose-600">
+                                            Cese por {{ ['renuncia' => 'renuncia voluntaria', 'despido' => 'despido', 'vencimiento' => 'vencimiento de contrato'][$periodo->cese_tipo] ?? $periodo->cese_tipo }}
+                                            el {{ $periodo->cese_fecha?->format('d/m/Y') }}
+                                        </p>
+                                    @elseif ($periodoCeseActivoId !== $periodo->id)
+                                        <button type="button" wire:click="abrirCeseDePeriodo({{ $periodo->id }})" class="mt-1.5 text-[10px] font-semibold text-rose-600 hover:underline">
+                                            Agregar cese
+                                        </button>
+                                    @endif
+
+                                    @if ($periodoCeseActivoId === $periodo->id)
+                                        <div class="mt-2 border-t border-slate-200 pt-2">
+                                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                <div class="sm:col-span-2">
+                                                    <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Fecha de cese</label>
+                                                    <input type="date" wire:model="contratoCeseFecha" class="form-input py-1.5 text-[11px]">
+                                                    @error('contratoCeseFecha') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                                </div>
+
+                                                <x-forms.choice
+                                                    label="Tipo de cese"
+                                                    name="contratoCeseTipo"
+                                                    :options="['renuncia' => 'Renuncia voluntaria', 'despido' => 'Despido', 'vencimiento' => 'Vencimiento de contrato']"
+                                                    :live="true"
+                                                    span
+                                                />
+                                            </div>
+
+                                            @if ($contratoCeseTipo)
+                                                @php($documentosCese = $this->documentosCeseDe($periodo))
+
+                                                <div class="mt-3 space-y-2">
+                                                    @foreach ($this->documentosCeseDisponibles() as $tipoDoc => $infoDoc)
+                                                        <div class="rounded-lg border border-slate-200 p-2.5">
+                                                            <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{{ $infoDoc['label'] }}</p>
+
+                                                            @if ($infoDoc['modo'] === 'generar')
+                                                                @php($plantillaDoc = $this->ceseePlantillaInfo($tipoDoc))
+                                                                <button
+                                                                    type="button"
+                                                                    wire:click="generarDocumentoCese('{{ $tipoDoc }}')"
+                                                                    wire:loading.attr="disabled"
+                                                                    wire:target="generarDocumentoCese('{{ $tipoDoc }}')"
+                                                                    class="btn-secondary w-full py-1 text-[10px]"
+                                                                    @disabled(! ($plantillaDoc['existe'] ?? false))
+                                                                >
+                                                                    {{ $plantillaDoc && $plantillaDoc['existe'] ? 'Descargar' : 'Plantilla pendiente de subir' }}
+                                                                </button>
+                                                            @else
+                                                                @if ($infoDoc['modo'] === 'generar_y_firmar')
+                                                                    @php($plantillaDoc = $this->ceseePlantillaInfo($tipoDoc))
+                                                                    <button
+                                                                        type="button"
+                                                                        wire:click="generarDocumentoCese('{{ $tipoDoc }}')"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="generarDocumentoCese('{{ $tipoDoc }}')"
+                                                                        class="btn-secondary mb-1.5 w-full py-1 text-[10px]"
+                                                                        @disabled(! ($plantillaDoc['existe'] ?? false))
+                                                                    >
+                                                                        {{ $plantillaDoc && $plantillaDoc['existe'] ? 'Generar borrador' : 'Plantilla pendiente de subir' }}
+                                                                    </button>
+                                                                @endif
+
+                                                                @php($documentoSubido = $documentosCese[$tipoDoc] ?? null)
+                                                                @php($pendienteCese = $documentosCeseNuevos[$tipoDoc] ?? null)
+
+                                                                @if ($pendienteCese)
+                                                                    <p class="truncate text-[10px] text-slate-500" title="{{ $pendienteCese->getClientOriginalName() }}">{{ $pendienteCese->getClientOriginalName() }}</p>
+                                                                    <div class="mt-1.5 flex items-center gap-2">
+                                                                        <button type="button" wire:click="guardarDocumentoCese('{{ $tipoDoc }}')" wire:loading.attr="disabled" class="btn-secondary flex-1 py-1 text-[10px]">
+                                                                            Guardar
+                                                                        </button>
+                                                                        <button type="button" wire:click="cancelarDocumentoCese('{{ $tipoDoc }}')" class="shrink-0 text-[10px] text-slate-400 hover:text-rose-500">
+                                                                            Cancelar
+                                                                        </button>
+                                                                    </div>
+                                                                    @error('documentosCeseNuevos.'.$tipoDoc) <p class="mt-1 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                                                @elseif ($documentoSubido)
+                                                                    <div class="flex items-center justify-between gap-2">
+                                                                        <a href="{{ route('registro-ingresos.documento-cese', $documentoSubido->id) }}" target="_blank" class="truncate text-[10px] text-sky-700 hover:underline" title="{{ $documentoSubido->nombre_original }}">
+                                                                            {{ $documentoSubido->nombre_original }}
+                                                                        </a>
+                                                                        <div class="flex shrink-0 items-center gap-2">
+                                                                            <label class="cursor-pointer text-[10px] text-sky-700 hover:underline">
+                                                                                Reemplazar
+                                                                                <input type="file" wire:model="documentosCeseNuevos.{{ $tipoDoc }}" class="hidden" accept="application/pdf,.doc,.docx">
+                                                                            </label>
+                                                                            <button
+                                                                                type="button"
+                                                                                wire:click="eliminarDocumentoCese({{ $documentoSubido->id }})"
+                                                                                wire:confirm="¿Eliminar este documento?"
+                                                                                class="text-rose-400 transition hover:text-rose-600"
+                                                                                aria-label="Eliminar documento"
+                                                                                title="Eliminar"
+                                                                            >
+                                                                                <svg aria-hidden="true" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4h8v2m1 0-1 14H6L5 6" />
+                                                                                </svg>
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                @else
+                                                                    <label class="btn-secondary block w-full cursor-pointer py-1 text-center text-[10px]">
+                                                                        Subir archivo
+                                                                        <input type="file" wire:model="documentosCeseNuevos.{{ $tipoDoc }}" class="hidden" accept="application/pdf,.doc,.docx">
+                                                                    </label>
+                                                                    @error('documentosCeseNuevos.'.$tipoDoc) <p class="mt-1 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                                                @endif
+
+                                                                <div wire:loading wire:target="documentosCeseNuevos.{{ $tipoDoc }}" class="mt-1 text-[10px] text-slate-400">
+                                                                    Subiendo...
+                                                                </div>
+                                                            @endif
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            @endif
+
+                                            <div class="mt-2 flex items-center gap-2">
+                                                <button type="button" wire:click="guardarCeseDePeriodo" wire:loading.attr="disabled" class="btn-secondary flex-1 py-1 text-[10px]">
+                                                    Guardar cese
+                                                </button>
+                                                <button type="button" wire:click="cerrarCeseDePeriodo" class="shrink-0 text-[10px] text-slate-400 hover:text-rose-500">
+                                                    Cancelar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    @endif
+                                </div>
+                            @empty
+                                <p class="text-[11px] italic text-slate-400">Todavía no hay períodos registrados. Usa "Registrar prueba (3 meses)" arriba para empezar.</p>
+                            @endforelse
                         </div>
                     </div>
                 @else

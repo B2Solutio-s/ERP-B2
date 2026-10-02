@@ -63,11 +63,6 @@ class Empleado extends Model
         'contrato_fecha_inicio',
         'contrato_fecha_fin',
         'contrato_fecha_firma',
-        'contrato_periodo',
-        'contrato_cese',
-        'contrato_cese_periodo',
-        'contrato_cese_tipo',
-        'contrato_cese_fecha',
     ];
 
     protected function casts(): array
@@ -87,8 +82,6 @@ class Empleado extends Model
             'contrato_fecha_inicio' => 'date',
             'contrato_fecha_fin' => 'date',
             'contrato_fecha_firma' => 'date',
-            'contrato_cese' => 'boolean',
-            'contrato_cese_fecha' => 'date',
         ];
     }
 
@@ -112,8 +105,8 @@ class Empleado extends Model
         return $this->hasMany(EmpleadoFamiliar::class);
     }
 
-    public function documentosCese()
+    public function periodosContrato()
     {
-        return $this->hasMany(EmpleadoDocumentoCese::class);
+        return $this->hasMany(EmpleadoPeriodoContrato::class)->latest('fecha_inicio');
     }
 }
