@@ -362,10 +362,10 @@ new #[Layout('layouts.panel')] class extends Component
             'contratoPuesto' => 'required|string|max:150',
             'contratoCampana' => $area?->usa_campana ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoCargo' => $area?->usa_cargo ? 'required|string|max:150' : 'nullable|string|max:150',
-            'contratoDuracion' => in_array($tipo, ['administrativo', 'practicas'], true) ? 'required|string|max:50' : 'nullable|string|max:50',
+            'contratoDuracion' => $tipo === 'administrativo' ? 'required|string|max:50' : 'nullable|string|max:50',
             'contratoAreaPracticas' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoUniversidad' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
-            'contratoRemuneracion' => 'required|numeric|min:0',
+            'contratoRemuneracion' => $tipo === 'practicas' ? 'nullable|numeric|min:0' : 'required|numeric|min:0',
             'contratoRemuneracionMovilidad' => 'nullable|numeric|min:0',
             'contratoFechaInicio' => 'required|date',
             'contratoFechaFin' => 'required|date|after_or_equal:contratoFechaInicio',
@@ -392,10 +392,10 @@ new #[Layout('layouts.panel')] class extends Component
             'contrato_puesto' => $this->contratoPuesto,
             'contrato_campana' => $area?->usa_campana ? $this->contratoCampana : null,
             'contrato_cargo' => $area?->usa_cargo ? $this->contratoCargo : null,
-            'contrato_duracion' => in_array($tipo, ['administrativo', 'practicas'], true) ? $this->contratoDuracion : null,
+            'contrato_duracion' => $tipo === 'administrativo' ? $this->contratoDuracion : null,
             'contrato_area_practicas' => $tipo === 'practicas' ? $this->contratoAreaPracticas : null,
             'contrato_universidad' => $tipo === 'practicas' ? $this->contratoUniversidad : null,
-            'contrato_remuneracion' => $this->contratoRemuneracion,
+            'contrato_remuneracion' => $tipo === 'practicas' ? null : $this->contratoRemuneracion,
             'contrato_remuneracion_movilidad' => $tipo === 'administrativo' && $this->contratoRemuneracionMovilidad !== '' ? $this->contratoRemuneracionMovilidad : null,
             'contrato_fecha_inicio' => $this->contratoFechaInicio,
             'contrato_fecha_fin' => $this->contratoFechaFin,
@@ -435,13 +435,11 @@ new #[Layout('layouts.panel')] class extends Component
             $procesador->setValue('REMUNERACION', $remuneracionTexto);
             $procesador->setValue('FECHA_FIRMA_CONTRATO', $this->fechaLarga($this->contratoFechaFirma));
         } elseif ($tipo === 'practicas') {
+            $procesador->setValue('TIPO_DOCUMENTO', 'DNI');
             $procesador->setValue('UNIVERSIDAD', $this->contratoUniversidad);
             $procesador->setValue('AREA_PRACTICAS', $this->contratoAreaPracticas);
-            $procesador->setValue('DURACION_CONVENIO', $this->contratoDuracion);
             $procesador->setValue('FECHA_INICIO_CONVENIO', $this->fechaLarga($this->contratoFechaInicio));
             $procesador->setValue('FECHA_FIN_CONVENIO', $this->fechaLarga($this->contratoFechaFin));
-            $procesador->setValue('SUBVENCION_NUMERO', $this->remuneracionNumero((float) $this->contratoRemuneracion));
-            $procesador->setValue('SUBVENCION_LETRAS', $this->remuneracionLetras((float) $this->contratoRemuneracion));
             $procesador->setValue('FECHA_FIRMA_CONVENIO', $this->fechaDiasDelMes($this->contratoFechaFirma));
         }
 
@@ -982,21 +980,21 @@ new #[Layout('layouts.panel')] class extends Component
                                     </div>
                                 @endif
 
-                                @if (in_array($contratoTipoActual, ['administrativo', 'practicas'], true))
+                                @if ($contratoTipoActual === 'administrativo')
                                     <div class="sm:col-span-2">
-                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración ({{ $contratoTipoActual === 'practicas' ? 'convenio' : 'contrato' }})</label>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración (contrato)</label>
                                         <input type="text" wire:model="contratoDuracion" class="form-input py-1.5 text-[11px] uppercase" placeholder="Ej. 06 meses">
                                         @error('contratoDuracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                     </div>
                                 @endif
 
-                                <div class="{{ $contratoTipoActual === 'administrativo' ? '' : 'sm:col-span-2' }}">
-                                    <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                                        {{ $contratoTipoActual === 'practicas' ? 'Subvención económica mensual (S/)' : 'Remuneración mensual (S/)' }}
-                                    </label>
-                                    <input type="number" step="0.01" min="0" wire:model="contratoRemuneracion" class="form-input py-1.5 text-[11px]" placeholder="Ej. 2000">
-                                    @error('contratoRemuneracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
-                                </div>
+                                @if ($contratoTipoActual !== 'practicas')
+                                    <div class="{{ $contratoTipoActual === 'administrativo' ? '' : 'sm:col-span-2' }}">
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Remuneración mensual (S/)</label>
+                                        <input type="number" step="0.01" min="0" wire:model="contratoRemuneracion" class="form-input py-1.5 text-[11px]" placeholder="Ej. 2000">
+                                        @error('contratoRemuneracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
 
                                 @if ($contratoTipoActual === 'administrativo')
                                     <div>
