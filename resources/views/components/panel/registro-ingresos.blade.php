@@ -240,7 +240,7 @@ new #[Layout('layouts.panel')] class extends Component
         $this->contratoPuesto = $empleado?->contrato_puesto ?? $empleado?->puesto ?? '';
         $this->contratoCampana = $empleado?->contrato_campana ?? $empleado?->campana ?? '';
         $this->contratoCargo = $empleado?->contrato_cargo ?? $empleado?->cargo ?? '';
-        $this->contratoDuracion = $empleado?->contrato_duracion ?? '';
+        $this->contratoDuracion = $empleado?->contrato_duracion ? preg_replace('/\D+/', '', $empleado->contrato_duracion) : '';
         $this->contratoAreaPracticas = $empleado?->contrato_area_practicas ?? '';
         $this->contratoUniversidad = $empleado?->contrato_universidad ?? '';
         $this->contratoRemuneracion = $empleado?->contrato_remuneracion !== null ? (string) $empleado->contrato_remuneracion : '';
@@ -350,7 +350,7 @@ new #[Layout('layouts.panel')] class extends Component
         $area = $this->contratoAreaModelo();
         $tipo = $this->contratoTipo();
 
-        $this->contratoDuracion = mb_strtoupper(trim($this->contratoDuracion));
+        $this->contratoDuracion = trim($this->contratoDuracion);
         $this->contratoAreaPracticas = mb_strtoupper(trim($this->contratoAreaPracticas));
         $this->contratoUniversidad = mb_strtoupper(trim($this->contratoUniversidad));
 
@@ -359,7 +359,7 @@ new #[Layout('layouts.panel')] class extends Component
             'contratoPuesto' => 'required|string|max:150',
             'contratoCampana' => $area?->usa_campana ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoCargo' => $area?->usa_cargo ? 'required|string|max:150' : 'nullable|string|max:150',
-            'contratoDuracion' => $tipo === 'administrativo' ? 'required|string|max:50' : 'nullable|string|max:50',
+            'contratoDuracion' => $tipo === 'administrativo' ? 'required|integer|min:1|max:60' : 'nullable|integer|min:1|max:60',
             'contratoAreaPracticas' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoUniversidad' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoRemuneracion' => $tipo === 'practicas' ? 'nullable|numeric|min:0' : 'required|numeric|min:0',
@@ -383,13 +383,14 @@ new #[Layout('layouts.panel')] class extends Component
         ]);
 
         $plantilla = $this->contratoPlantillaInfo();
+        $duracionTexto = $this->contratoDuracion !== '' ? $this->contratoDuracion.' MESES' : '';
 
         $empleado->update([
             'contrato_area' => $this->contratoArea,
             'contrato_puesto' => $this->contratoPuesto,
             'contrato_campana' => $area?->usa_campana ? $this->contratoCampana : null,
             'contrato_cargo' => $area?->usa_cargo ? $this->contratoCargo : null,
-            'contrato_duracion' => $tipo === 'administrativo' ? $this->contratoDuracion : null,
+            'contrato_duracion' => $tipo === 'administrativo' ? $duracionTexto : null,
             'contrato_area_practicas' => $tipo === 'practicas' ? $this->contratoAreaPracticas : null,
             'contrato_universidad' => $tipo === 'practicas' ? $this->contratoUniversidad : null,
             'contrato_remuneracion' => $tipo === 'practicas' ? null : $this->contratoRemuneracion,
@@ -424,7 +425,7 @@ new #[Layout('layouts.panel')] class extends Component
                 ? "{$this->contratoCargo} DE {$this->contratoPuesto}"
                 : $this->contratoPuesto;
             $procesador->setValue('PUESTO_TRABAJADOR', mb_strtoupper($puestoCompleto));
-            $procesador->setValue('DURACION_CONTRATO', $this->contratoDuracion);
+            $procesador->setValue('DURACION_CONTRATO', $duracionTexto);
             $procesador->setValue('FECHA_INICIO_CONTRATO', $this->fechaLarga($this->contratoFechaInicio));
             $procesador->setValue('FECHA_FIN_CONTRATO', $this->fechaLarga($this->contratoFechaFin));
             $remuneracionTexto = $this->remuneracionNumero((float) $this->contratoRemuneracion);
@@ -981,8 +982,11 @@ new #[Layout('layouts.panel')] class extends Component
 
                                 @if ($contratoTipoActual === 'administrativo')
                                     <div class="sm:col-span-2">
-                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración (contrato)</label>
-                                        <input type="text" wire:model="contratoDuracion" class="form-input py-1.5 text-[11px] uppercase" placeholder="Ej. 06 meses">
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración (contrato, en meses)</label>
+                                        <div class="relative">
+                                            <input type="number" min="1" max="60" step="1" wire:model="contratoDuracion" class="form-input py-1.5 pr-14 text-[11px]" placeholder="Ej. 6">
+                                            <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">meses</span>
+                                        </div>
                                         @error('contratoDuracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                     </div>
                                 @endif
