@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\CandidatoDocumento;
+use App\Models\EmpleadoDocumentoCese;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -40,3 +41,9 @@ Route::get('/panel/registro-ingresos/documentos/{documento}', function (Candidat
 
     return Storage::disk('local')->response($documento->ruta, $documento->nombre_original);
 })->name('registro-ingresos.documento')->middleware('auth');
+
+Route::get('/panel/registro-ingresos/documentos-cese/{documento}', function (EmpleadoDocumentoCese $documento) {
+    abort_unless(Auth::user()->esAdmin(), 403);
+
+    return Storage::disk('local')->response($documento->ruta, $documento->nombre_original);
+})->name('registro-ingresos.documento-cese')->middleware('auth');
