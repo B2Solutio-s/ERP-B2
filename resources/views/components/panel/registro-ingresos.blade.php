@@ -257,13 +257,6 @@ new #[Layout('layouts.panel')] class extends Component
         $this->contratoCargo = '';
     }
 
-    public function updatedContratoPuesto(): void
-    {
-        if ($this->contratoPuesto !== '') {
-            $this->contratoPuesto = mb_strtoupper($this->contratoPuesto);
-        }
-    }
-
     public function contratoAreaModelo(): ?Area
     {
         return $this->contratoArea !== '' ? Area::where('nombre', $this->contratoArea)->first() : null;
@@ -357,9 +350,6 @@ new #[Layout('layouts.panel')] class extends Component
         $area = $this->contratoAreaModelo();
         $tipo = $this->contratoTipo();
 
-        $this->contratoPuesto = mb_strtoupper(trim($this->contratoPuesto));
-        $this->contratoCampana = mb_strtoupper(trim($this->contratoCampana));
-        $this->contratoCargo = mb_strtoupper(trim($this->contratoCargo));
         $this->contratoDuracion = mb_strtoupper(trim($this->contratoDuracion));
         $this->contratoAreaPracticas = mb_strtoupper(trim($this->contratoAreaPracticas));
         $this->contratoUniversidad = mb_strtoupper(trim($this->contratoUniversidad));
