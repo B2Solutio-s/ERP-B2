@@ -54,7 +54,15 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $contratoCargo = '';
 
+    public string $contratoDuracion = '';
+
+    public string $contratoAreaPracticas = '';
+
+    public string $contratoUniversidad = '';
+
     public string $contratoRemuneracion = '';
+
+    public string $contratoRemuneracionMovilidad = '';
 
     public string $contratoFechaInicio = '';
 
@@ -232,7 +240,11 @@ new #[Layout('layouts.panel')] class extends Component
         $this->contratoPuesto = $empleado?->contrato_puesto ?? $empleado?->puesto ?? '';
         $this->contratoCampana = $empleado?->contrato_campana ?? $empleado?->campana ?? '';
         $this->contratoCargo = $empleado?->contrato_cargo ?? $empleado?->cargo ?? '';
+        $this->contratoDuracion = $empleado?->contrato_duracion ?? '';
+        $this->contratoAreaPracticas = $empleado?->contrato_area_practicas ?? '';
+        $this->contratoUniversidad = $empleado?->contrato_universidad ?? '';
         $this->contratoRemuneracion = $empleado?->contrato_remuneracion !== null ? (string) $empleado->contrato_remuneracion : '';
+        $this->contratoRemuneracionMovilidad = $empleado?->contrato_remuneracion_movilidad !== null ? (string) $empleado->contrato_remuneracion_movilidad : '';
         $this->contratoFechaInicio = $empleado?->contrato_fecha_inicio?->format('Y-m-d') ?? '';
         $this->contratoFechaFin = $empleado?->contrato_fecha_fin?->format('Y-m-d') ?? '';
         $this->contratoFechaFirma = $empleado?->contrato_fecha_firma?->format('Y-m-d') ?? now()->format('Y-m-d');
@@ -336,17 +348,25 @@ new #[Layout('layouts.panel')] class extends Component
         }
 
         $area = $this->contratoAreaModelo();
+        $tipo = $this->contratoTipo();
 
         $this->contratoPuesto = mb_strtoupper(trim($this->contratoPuesto));
         $this->contratoCampana = mb_strtoupper(trim($this->contratoCampana));
         $this->contratoCargo = mb_strtoupper(trim($this->contratoCargo));
+        $this->contratoDuracion = mb_strtoupper(trim($this->contratoDuracion));
+        $this->contratoAreaPracticas = mb_strtoupper(trim($this->contratoAreaPracticas));
+        $this->contratoUniversidad = mb_strtoupper(trim($this->contratoUniversidad));
 
         $this->validate([
             'contratoArea' => 'required|string',
             'contratoPuesto' => 'required|string|max:150',
             'contratoCampana' => $area?->usa_campana ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoCargo' => $area?->usa_cargo ? 'required|string|max:150' : 'nullable|string|max:150',
+            'contratoDuracion' => in_array($tipo, ['administrativo', 'practicas'], true) ? 'required|string|max:50' : 'nullable|string|max:50',
+            'contratoAreaPracticas' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
+            'contratoUniversidad' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoRemuneracion' => 'required|numeric|min:0',
+            'contratoRemuneracionMovilidad' => $tipo === 'administrativo' ? 'required|numeric|min:0' : 'nullable|numeric|min:0',
             'contratoFechaInicio' => 'required|date',
             'contratoFechaFin' => 'required|date|after_or_equal:contratoFechaInicio',
             'contratoFechaFirma' => 'required|date',
@@ -355,7 +375,11 @@ new #[Layout('layouts.panel')] class extends Component
             'contratoPuesto' => 'puesto',
             'contratoCampana' => 'campaña',
             'contratoCargo' => 'cargo',
-            'contratoRemuneracion' => 'remuneración',
+            'contratoDuracion' => 'duración',
+            'contratoAreaPracticas' => 'área de prácticas',
+            'contratoUniversidad' => 'universidad',
+            'contratoRemuneracion' => $tipo === 'practicas' ? 'subvención' : 'remuneración',
+            'contratoRemuneracionMovilidad' => 'movilidad',
             'contratoFechaInicio' => 'fecha de inicio',
             'contratoFechaFin' => 'fecha de fin',
             'contratoFechaFirma' => 'fecha de firma',
@@ -368,7 +392,11 @@ new #[Layout('layouts.panel')] class extends Component
             'contrato_puesto' => $this->contratoPuesto,
             'contrato_campana' => $area?->usa_campana ? $this->contratoCampana : null,
             'contrato_cargo' => $area?->usa_cargo ? $this->contratoCargo : null,
+            'contrato_duracion' => in_array($tipo, ['administrativo', 'practicas'], true) ? $this->contratoDuracion : null,
+            'contrato_area_practicas' => $tipo === 'practicas' ? $this->contratoAreaPracticas : null,
+            'contrato_universidad' => $tipo === 'practicas' ? $this->contratoUniversidad : null,
             'contrato_remuneracion' => $this->contratoRemuneracion,
+            'contrato_remuneracion_movilidad' => $tipo === 'administrativo' ? $this->contratoRemuneracionMovilidad : null,
             'contrato_fecha_inicio' => $this->contratoFechaInicio,
             'contrato_fecha_fin' => $this->contratoFechaFin,
             'contrato_fecha_firma' => $this->contratoFechaFirma,
@@ -380,24 +408,39 @@ new #[Layout('layouts.panel')] class extends Component
             return;
         }
 
-        if ($this->contratoTipo() !== 'ejecutivo') {
-            $this->addError('contratoArea', 'La generación automática para "'.$plantilla['label'].'" todavía no está implementada. Los datos ya quedaron guardados.');
-
-            return;
-        }
-
         $nombreCompleto = trim("{$empleado->apellido_paterno} {$empleado->apellido_materno} {$empleado->nombres}");
 
         $procesador = new TemplateProcessor($plantilla['ruta']);
         $procesador->setValue('NOMBRE_TRABAJADOR', mb_strtoupper($nombreCompleto));
         $procesador->setValue('DNI_TRABAJADOR', $empleado->documento_identidad);
         $procesador->setValue('DIRECCION_TRABAJADOR', mb_strtoupper((string) $empleado->direccion));
-        $procesador->setValue('PUESTO_TRABAJADOR', mb_strtoupper($this->contratoPuesto));
-        $procesador->setValue('REMUNERACION_NUMERO', $this->remuneracionNumero((float) $this->contratoRemuneracion));
-        $procesador->setValue('REMUNERACION_LETRAS', $this->remuneracionLetras((float) $this->contratoRemuneracion));
-        $procesador->setValue('FECHA_INICIO_CONTRATO', $this->fechaLarga($this->contratoFechaInicio));
-        $procesador->setValue('FECHA_FIN_CONTRATO', $this->fechaLarga($this->contratoFechaFin));
-        $procesador->setValue('FECHA_FIRMA_CONTRATO', $this->fechaLarga($this->contratoFechaFirma));
+
+        if ($tipo === 'ejecutivo') {
+            $procesador->setValue('PUESTO_TRABAJADOR', mb_strtoupper($this->contratoPuesto));
+            $procesador->setValue('REMUNERACION_NUMERO', $this->remuneracionNumero((float) $this->contratoRemuneracion));
+            $procesador->setValue('REMUNERACION_LETRAS', $this->remuneracionLetras((float) $this->contratoRemuneracion));
+            $procesador->setValue('FECHA_INICIO_CONTRATO', $this->fechaLarga($this->contratoFechaInicio));
+            $procesador->setValue('FECHA_FIN_CONTRATO', $this->fechaLarga($this->contratoFechaFin));
+            $procesador->setValue('FECHA_FIRMA_CONTRATO', $this->fechaLarga($this->contratoFechaFirma));
+        } elseif ($tipo === 'administrativo') {
+            $puestoCompleto = trim("{$this->contratoCargo} DE {$this->contratoPuesto}");
+            $procesador->setValue('PUESTO_TRABAJADOR', mb_strtoupper($puestoCompleto));
+            $procesador->setValue('DURACION_CONTRATO', $this->contratoDuracion);
+            $procesador->setValue('FECHA_INICIO_CONTRATO', $this->fechaLarga($this->contratoFechaInicio));
+            $procesador->setValue('FECHA_FIN_CONTRATO', $this->fechaLarga($this->contratoFechaFin));
+            $procesador->setValue('REMUNERACION_BASE', $this->remuneracionNumero((float) $this->contratoRemuneracion));
+            $procesador->setValue('REMUNERACION_MOVILIDAD', $this->remuneracionNumero((float) $this->contratoRemuneracionMovilidad).' DE MOVILIDAD');
+            $procesador->setValue('FECHA_FIRMA_CONTRATO', $this->fechaLarga($this->contratoFechaFirma));
+        } elseif ($tipo === 'practicas') {
+            $procesador->setValue('UNIVERSIDAD', $this->contratoUniversidad);
+            $procesador->setValue('AREA_PRACTICAS', $this->contratoAreaPracticas);
+            $procesador->setValue('DURACION_CONVENIO', $this->contratoDuracion);
+            $procesador->setValue('FECHA_INICIO_CONVENIO', $this->fechaLarga($this->contratoFechaInicio));
+            $procesador->setValue('FECHA_FIN_CONVENIO', $this->fechaLarga($this->contratoFechaFin));
+            $procesador->setValue('SUBVENCION_NUMERO', $this->remuneracionNumero((float) $this->contratoRemuneracion));
+            $procesador->setValue('SUBVENCION_LETRAS', $this->remuneracionLetras((float) $this->contratoRemuneracion));
+            $procesador->setValue('FECHA_FIRMA_CONVENIO', $this->fechaDiasDelMes($this->contratoFechaFirma));
+        }
 
         $rutaTemporal = tempnam(sys_get_temp_dir(), 'contrato_').'.docx';
         $procesador->saveAs($rutaTemporal);
@@ -426,6 +469,23 @@ new #[Layout('layouts.panel')] class extends Component
         $carbon = Carbon::parse($fecha);
 
         return "{$carbon->day} de {$meses[$carbon->month]} del {$carbon->year}";
+    }
+
+    private function fechaDiasDelMes(?string $fecha): string
+    {
+        if (! $fecha) {
+            return '';
+        }
+
+        $meses = [
+            1 => 'enero', 2 => 'febrero', 3 => 'marzo', 4 => 'abril', 5 => 'mayo', 6 => 'junio',
+            7 => 'julio', 8 => 'agosto', 9 => 'septiembre', 10 => 'octubre', 11 => 'noviembre', 12 => 'diciembre',
+        ];
+
+        $carbon = Carbon::parse($fecha);
+        $dia = str_pad((string) $carbon->day, 2, '0', STR_PAD_LEFT);
+
+        return "{$dia} días del mes de {$meses[$carbon->month]} del {$carbon->year}";
     }
 
     private function remuneracionNumero(float $monto): string
@@ -895,6 +955,8 @@ new #[Layout('layouts.panel')] class extends Component
                                     </div>
                                 @endif
 
+                                @php($contratoTipoActual = $this->contratoTipo())
+
                                 @if ($contratoPlantilla)
                                     <div class="sm:col-span-2 rounded-lg {{ $contratoPlantilla['existe'] ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700' }} px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide">
                                         Tipo: {{ $contratoPlantilla['label'] }}
@@ -904,11 +966,43 @@ new #[Layout('layouts.panel')] class extends Component
                                     </div>
                                 @endif
 
-                                <div class="sm:col-span-2">
-                                    <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Remuneración mensual (S/)</label>
+                                @if ($contratoTipoActual === 'practicas')
+                                    <div>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Universidad</label>
+                                        <input type="text" wire:model="contratoUniversidad" class="form-input py-1.5 text-[11px] uppercase">
+                                        @error('contratoUniversidad') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                    <div>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Área de prácticas</label>
+                                        <input type="text" wire:model="contratoAreaPracticas" class="form-input py-1.5 text-[11px] uppercase" placeholder="Ej. Tecnología de la información">
+                                        @error('contratoAreaPracticas') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
+
+                                @if (in_array($contratoTipoActual, ['administrativo', 'practicas'], true))
+                                    <div class="sm:col-span-2">
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Duración ({{ $contratoTipoActual === 'practicas' ? 'convenio' : 'contrato' }})</label>
+                                        <input type="text" wire:model="contratoDuracion" class="form-input py-1.5 text-[11px] uppercase" placeholder="Ej. 06 meses">
+                                        @error('contratoDuracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
+
+                                <div class="{{ $contratoTipoActual === 'administrativo' ? '' : 'sm:col-span-2' }}">
+                                    <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                        {{ $contratoTipoActual === 'practicas' ? 'Subvención económica mensual (S/)' : 'Remuneración mensual (S/)' }}
+                                    </label>
                                     <input type="number" step="0.01" min="0" wire:model="contratoRemuneracion" class="form-input py-1.5 text-[11px]" placeholder="Ej. 2000">
                                     @error('contratoRemuneracion') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                 </div>
+
+                                @if ($contratoTipoActual === 'administrativo')
+                                    <div>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Movilidad (S/)</label>
+                                        <input type="number" step="0.01" min="0" wire:model="contratoRemuneracionMovilidad" class="form-input py-1.5 text-[11px]" placeholder="Ej. 200">
+                                        @error('contratoRemuneracionMovilidad') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
+
                                 <div>
                                     <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Fecha inicio</label>
                                     <input type="date" wire:model="contratoFechaInicio" class="form-input py-1.5 text-[11px]">
