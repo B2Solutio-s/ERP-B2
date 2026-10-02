@@ -366,7 +366,7 @@ new #[Layout('layouts.panel')] class extends Component
             'contratoAreaPracticas' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoUniversidad' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoRemuneracion' => 'required|numeric|min:0',
-            'contratoRemuneracionMovilidad' => $tipo === 'administrativo' ? 'required|numeric|min:0' : 'nullable|numeric|min:0',
+            'contratoRemuneracionMovilidad' => 'nullable|numeric|min:0',
             'contratoFechaInicio' => 'required|date',
             'contratoFechaFin' => 'required|date|after_or_equal:contratoFechaInicio',
             'contratoFechaFirma' => 'required|date',
@@ -396,7 +396,7 @@ new #[Layout('layouts.panel')] class extends Component
             'contrato_area_practicas' => $tipo === 'practicas' ? $this->contratoAreaPracticas : null,
             'contrato_universidad' => $tipo === 'practicas' ? $this->contratoUniversidad : null,
             'contrato_remuneracion' => $this->contratoRemuneracion,
-            'contrato_remuneracion_movilidad' => $tipo === 'administrativo' ? $this->contratoRemuneracionMovilidad : null,
+            'contrato_remuneracion_movilidad' => $tipo === 'administrativo' && $this->contratoRemuneracionMovilidad !== '' ? $this->contratoRemuneracionMovilidad : null,
             'contrato_fecha_inicio' => $this->contratoFechaInicio,
             'contrato_fecha_fin' => $this->contratoFechaFin,
             'contrato_fecha_firma' => $this->contratoFechaFirma,
@@ -428,8 +428,11 @@ new #[Layout('layouts.panel')] class extends Component
             $procesador->setValue('DURACION_CONTRATO', $this->contratoDuracion);
             $procesador->setValue('FECHA_INICIO_CONTRATO', $this->fechaLarga($this->contratoFechaInicio));
             $procesador->setValue('FECHA_FIN_CONTRATO', $this->fechaLarga($this->contratoFechaFin));
-            $procesador->setValue('REMUNERACION_BASE', $this->remuneracionNumero((float) $this->contratoRemuneracion));
-            $procesador->setValue('REMUNERACION_MOVILIDAD', $this->remuneracionNumero((float) $this->contratoRemuneracionMovilidad).' DE MOVILIDAD');
+            $remuneracionTexto = $this->remuneracionNumero((float) $this->contratoRemuneracion);
+            if ($this->contratoRemuneracionMovilidad !== '' && (float) $this->contratoRemuneracionMovilidad > 0) {
+                $remuneracionTexto .= ' + '.$this->remuneracionNumero((float) $this->contratoRemuneracionMovilidad).' DE MOVILIDAD';
+            }
+            $procesador->setValue('REMUNERACION', $remuneracionTexto);
             $procesador->setValue('FECHA_FIRMA_CONTRATO', $this->fechaLarga($this->contratoFechaFirma));
         } elseif ($tipo === 'practicas') {
             $procesador->setValue('UNIVERSIDAD', $this->contratoUniversidad);
@@ -997,7 +1000,7 @@ new #[Layout('layouts.panel')] class extends Component
 
                                 @if ($contratoTipoActual === 'administrativo')
                                     <div>
-                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Movilidad (S/)</label>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Movilidad (S/) — opcional</label>
                                         <input type="number" step="0.01" min="0" wire:model="contratoRemuneracionMovilidad" class="form-input py-1.5 text-[11px]" placeholder="Ej. 200">
                                         @error('contratoRemuneracionMovilidad') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                     </div>
