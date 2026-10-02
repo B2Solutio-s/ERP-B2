@@ -1,7 +1,9 @@
 <?php
 
+use App\Models\Area;
 use App\Models\CandidatoReclutamiento;
 use App\Models\Campana;
+use App\Models\Cargo;
 use App\Models\Empleado;
 use App\Models\Puesto;
 use App\Models\User;
@@ -24,10 +26,11 @@ new #[Layout('layouts.panel')] class extends Component
     public string $moduloActivo = 'candidatos';
 
     public string $rowsJson = '[]';
-    public array $campanas = [];
-    public array $puestos = [];
-    public array $campanasPorPuesto = [];
-    public array $cargosPorCampana = [];
+    public array $areas = [];
+    public array $areasConfig = [];
+    public array $puestosPorArea = [];
+    public array $campanasPorArea = [];
+    public array $cargosPorArea = [];
     public array $agentesReclutadores = [];
 
     public const TIPIFICACION_OPTIONS = [
@@ -90,23 +93,25 @@ new #[Layout('layouts.panel')] class extends Component
     {
         abort_unless(Auth::user()->esGth() || Auth::user()->esAdmin(), 403);
         $this->rowsJson = $this->encodeRows();
-        $this->campanas = Campana::query()
-            ->orderBy('nombre')
-            ->pluck('nombre')
-            ->filter()
-            ->values()
+
+        $areas = Area::query()->orderBy('nombre')->get();
+
+        $this->areas = $areas->pluck('nombre')->values()->all();
+
+        $this->areasConfig = $areas
+            ->mapWithKeys(fn ($area) => [$area->nombre => ['usa_campana' => $area->usa_campana, 'usa_cargo' => $area->usa_cargo]])
             ->all();
 
-        $this->puestos = Puesto::query()->orderBy('nombre')->pluck('nombre')->values()->all();
-
-        $this->campanasPorPuesto = Puesto::with(['campanas' => fn ($query) => $query->orderBy('nombre')])
-            ->get()
-            ->mapWithKeys(fn ($puesto) => [$puesto->nombre => $puesto->campanas->pluck('nombre')->values()->all()])
+        $this->puestosPorArea = $areas
+            ->mapWithKeys(fn ($area) => [$area->nombre => Puesto::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre')->values()->all()])
             ->all();
 
-        $this->cargosPorCampana = Campana::with(['cargos' => fn ($query) => $query->orderBy('nombre')])
-            ->get()
-            ->mapWithKeys(fn ($campana) => [$campana->nombre => $campana->cargos->pluck('nombre')->values()->all()])
+        $this->campanasPorArea = $areas
+            ->mapWithKeys(fn ($area) => [$area->nombre => Campana::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre')->values()->all()])
+            ->all();
+
+        $this->cargosPorArea = $areas
+            ->mapWithKeys(fn ($area) => [$area->nombre => Cargo::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre')->values()->all()])
             ->all();
 
         $this->agentesReclutadores = User::query()
@@ -141,7 +146,7 @@ new #[Layout('layouts.panel')] class extends Component
     protected function camposFormulario(): array
     {
         return [
-            'mes', 'fecha_gestion', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'edad',
+            'mes', 'fecha_gestion', 'agente_reclutador', 'area', 'puesto', 'campana', 'cargo', 'dni_ce', 'edad',
             'nombres', 'apellidos', 'numero_celular', 'distrito', 'observaciones',
             'tipificacion', 'subtipificacion_rechazo',
             'aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista',
@@ -152,7 +157,7 @@ new #[Layout('layouts.panel')] class extends Component
     protected function camposTexto(): array
     {
         return [
-            'mes', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'nombres', 'apellidos', 'numero_celular',
+            'mes', 'agente_reclutador', 'area', 'puesto', 'campana', 'cargo', 'dni_ce', 'nombres', 'apellidos', 'numero_celular',
             'distrito', 'observaciones', 'tipificacion', 'subtipificacion_rechazo',
             'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
         ];
@@ -368,6 +373,7 @@ new #[Layout('layouts.panel')] class extends Component
             'mes' => $candidato->mes,
             'fecha_gestion' => $candidato->fecha_gestion?->format('Y-m-d'),
             'agente_reclutador' => $candidato->agente_reclutador,
+            'area' => $candidato->area,
             'puesto' => $candidato->puesto,
             'campana' => $candidato->campana,
             'cargo' => $candidato->cargo,
@@ -847,10 +853,11 @@ new #[Layout('layouts.panel')] class extends Component
         <form id="reclutamiento-form" wire:submit.prevent="guardarBase" class="space-y-4">
             <input type="hidden" id="rowsJson" name="rowsJson" value="{{ $rowsJson }}">
             <script type="application/json" id="reclutamiento-grid-data">{!! $rowsJson !!}</script>
-            <script type="application/json" id="reclutamiento-campanas">@json($campanas)</script>
-            <script type="application/json" id="reclutamiento-puestos">@json($puestos)</script>
-            <script type="application/json" id="reclutamiento-campanas-por-puesto">@json($campanasPorPuesto)</script>
-            <script type="application/json" id="reclutamiento-cargos-por-campana">@json($cargosPorCampana)</script>
+            <script type="application/json" id="reclutamiento-areas">@json($areas)</script>
+            <script type="application/json" id="reclutamiento-areas-config">@json($areasConfig)</script>
+            <script type="application/json" id="reclutamiento-puestos-por-area">@json($puestosPorArea)</script>
+            <script type="application/json" id="reclutamiento-campanas-por-area">@json($campanasPorArea)</script>
+            <script type="application/json" id="reclutamiento-cargos-por-area">@json($cargosPorArea)</script>
             <script type="application/json" id="reclutamiento-agentes">@json($agentesReclutadores)</script>
             <script type="application/json" id="reclutamiento-tipificacion-options">@json(self::TIPIFICACION_OPTIONS)</script>
             <script type="application/json" id="reclutamiento-subtipificacion-options">@json(self::SUBTIPIFICACION_OPTIONS)</script>
@@ -863,7 +870,7 @@ new #[Layout('layouts.panel')] class extends Component
                         <thead class="bg-slate-100 text-slate-700">
                             <tr>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-500 px-3 py-3 text-center text-white">GESTIÓN</th>
-                                <th colspan="4" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">BASE</th>
+                                <th colspan="5" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">BASE</th>
                                 <th colspan="7" class="border-b border-slate-200 bg-teal-800 px-3 py-3 text-center text-white">DATOS PRIMARIOS DE GESTIÓN</th>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-300 px-3 py-3 text-center text-slate-900">GESTIÓN DE LLAMADAS</th>
                                 <th colspan="6" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">ENTREVISTA</th>
@@ -873,6 +880,7 @@ new #[Layout('layouts.panel')] class extends Component
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Mes</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Fecha gestión</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Agente reclutador</th>
+                                <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Área</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Puesto</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Campaña</th>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Cargo</th>

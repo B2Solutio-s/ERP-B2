@@ -8,16 +8,11 @@ class Campana extends Model
 {
     protected $fillable = [
         'nombre',
-        'puesto_id',
+        'area_id',
     ];
 
-    public function puesto()
+    public function area()
     {
-        return $this->belongsTo(Puesto::class);
-    }
-
-    public function cargos()
-    {
-        return $this->hasMany(Cargo::class);
+        return $this->belongsTo(Area::class);
     }
 }

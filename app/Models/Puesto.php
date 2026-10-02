@@ -8,10 +8,11 @@ class Puesto extends Model
 {
     protected $fillable = [
         'nombre',
+        'area_id',
     ];
 
-    public function campanas()
+    public function area()
     {
-        return $this->hasMany(Campana::class);
+        return $this->belongsTo(Area::class);
     }
 }

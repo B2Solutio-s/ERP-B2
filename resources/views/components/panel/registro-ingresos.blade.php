@@ -1,9 +1,13 @@
 <?php
 
+use App\Models\Area;
 use App\Models\CandidatoDocumento;
 use App\Models\CandidatoReclutamiento;
+use App\Models\Campana;
+use App\Models\Cargo;
 use App\Models\Empleado;
 use App\Models\OnboardingInvitation;
+use App\Models\Puesto;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -42,7 +46,13 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $cusppEdit = '';
 
+    public string $contratoArea = '';
+
     public string $contratoPuesto = '';
+
+    public string $contratoCampana = '';
+
+    public string $contratoCargo = '';
 
     public string $contratoRemuneracion = '';
 
@@ -218,11 +228,21 @@ new #[Layout('layouts.panel')] class extends Component
         $candidato = $this->candidatoParaDatos();
         $empleado = $candidato ? $this->invitacionDe($candidato)?->empleado : null;
 
+        $this->contratoArea = $empleado?->contrato_area ?? $empleado?->area ?? '';
         $this->contratoPuesto = $empleado?->contrato_puesto ?? $empleado?->puesto ?? '';
+        $this->contratoCampana = $empleado?->contrato_campana ?? $empleado?->campana ?? '';
+        $this->contratoCargo = $empleado?->contrato_cargo ?? $empleado?->cargo ?? '';
         $this->contratoRemuneracion = $empleado?->contrato_remuneracion !== null ? (string) $empleado->contrato_remuneracion : '';
         $this->contratoFechaInicio = $empleado?->contrato_fecha_inicio?->format('Y-m-d') ?? '';
         $this->contratoFechaFin = $empleado?->contrato_fecha_fin?->format('Y-m-d') ?? '';
         $this->contratoFechaFirma = $empleado?->contrato_fecha_firma?->format('Y-m-d') ?? now()->format('Y-m-d');
+    }
+
+    public function updatedContratoArea(): void
+    {
+        $this->contratoPuesto = '';
+        $this->contratoCampana = '';
+        $this->contratoCargo = '';
     }
 
     public function updatedContratoPuesto(): void
@@ -230,6 +250,77 @@ new #[Layout('layouts.panel')] class extends Component
         if ($this->contratoPuesto !== '') {
             $this->contratoPuesto = mb_strtoupper($this->contratoPuesto);
         }
+    }
+
+    public function contratoAreaModelo(): ?Area
+    {
+        return $this->contratoArea !== '' ? Area::where('nombre', $this->contratoArea)->first() : null;
+    }
+
+    public function contratoPuestosDisponibles()
+    {
+        $area = $this->contratoAreaModelo();
+
+        return $area ? Puesto::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
+    }
+
+    public function contratoCampanasDisponibles()
+    {
+        $area = $this->contratoAreaModelo();
+
+        return $area ? Campana::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
+    }
+
+    public function contratoCargosDisponibles()
+    {
+        $area = $this->contratoAreaModelo();
+
+        return $area ? Cargo::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
+    }
+
+    public function contratoTipo(): ?string
+    {
+        $area = $this->contratoAreaModelo();
+        if (! $area) {
+            return null;
+        }
+
+        if ($area->usa_cargo) {
+            if ($this->contratoCargo === '') {
+                return null;
+            }
+
+            $cargo = Cargo::where('area_id', $area->id)->where('nombre', $this->contratoCargo)->first();
+            if ($cargo?->tipo_contrato) {
+                return $cargo->tipo_contrato;
+            }
+        }
+
+        return $area->tipo_contrato;
+    }
+
+    public function contratoPlantillaInfo(): ?array
+    {
+        $tipo = $this->contratoTipo();
+        if (! $tipo) {
+            return null;
+        }
+
+        $plantillas = [
+            'ejecutivo' => ['label' => 'Contrato de trabajo (Ejecutivo)', 'archivo' => 'contrato-trabajo-template.docx'],
+            'practicas' => ['label' => 'Convenio de prácticas preprofesionales', 'archivo' => 'convenio-practicas-template.docx'],
+            'administrativo' => ['label' => 'Contrato administrativo', 'archivo' => 'contrato-administrativo-template.docx'],
+        ];
+
+        $info = $plantillas[$tipo] ?? null;
+        if (! $info) {
+            return null;
+        }
+
+        $info['ruta'] = resource_path('data/'.$info['archivo']);
+        $info['existe'] = file_exists($info['ruta']);
+
+        return $info;
     }
 
     public function descargarContrato()
@@ -244,33 +335,60 @@ new #[Layout('layouts.panel')] class extends Component
             return;
         }
 
+        $area = $this->contratoAreaModelo();
+
         $this->contratoPuesto = mb_strtoupper(trim($this->contratoPuesto));
+        $this->contratoCampana = mb_strtoupper(trim($this->contratoCampana));
+        $this->contratoCargo = mb_strtoupper(trim($this->contratoCargo));
 
         $this->validate([
+            'contratoArea' => 'required|string',
             'contratoPuesto' => 'required|string|max:150',
+            'contratoCampana' => $area?->usa_campana ? 'required|string|max:150' : 'nullable|string|max:150',
+            'contratoCargo' => $area?->usa_cargo ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoRemuneracion' => 'required|numeric|min:0',
             'contratoFechaInicio' => 'required|date',
             'contratoFechaFin' => 'required|date|after_or_equal:contratoFechaInicio',
             'contratoFechaFirma' => 'required|date',
         ], [], [
+            'contratoArea' => 'área',
             'contratoPuesto' => 'puesto',
+            'contratoCampana' => 'campaña',
+            'contratoCargo' => 'cargo',
             'contratoRemuneracion' => 'remuneración',
             'contratoFechaInicio' => 'fecha de inicio',
             'contratoFechaFin' => 'fecha de fin',
             'contratoFechaFirma' => 'fecha de firma',
         ]);
 
+        $plantilla = $this->contratoPlantillaInfo();
+
         $empleado->update([
+            'contrato_area' => $this->contratoArea,
             'contrato_puesto' => $this->contratoPuesto,
+            'contrato_campana' => $area?->usa_campana ? $this->contratoCampana : null,
+            'contrato_cargo' => $area?->usa_cargo ? $this->contratoCargo : null,
             'contrato_remuneracion' => $this->contratoRemuneracion,
             'contrato_fecha_inicio' => $this->contratoFechaInicio,
             'contrato_fecha_fin' => $this->contratoFechaFin,
             'contrato_fecha_firma' => $this->contratoFechaFirma,
         ]);
 
+        if (! $plantilla || ! $plantilla['existe']) {
+            $this->addError('contratoArea', 'Todavía no se subió la plantilla para este tipo de contrato ('.($plantilla['label'] ?? 'desconocido').'). Los datos ya quedaron guardados.');
+
+            return;
+        }
+
+        if ($this->contratoTipo() !== 'ejecutivo') {
+            $this->addError('contratoArea', 'La generación automática para "'.$plantilla['label'].'" todavía no está implementada. Los datos ya quedaron guardados.');
+
+            return;
+        }
+
         $nombreCompleto = trim("{$empleado->apellido_paterno} {$empleado->apellido_materno} {$empleado->nombres}");
 
-        $procesador = new TemplateProcessor(resource_path('data/contrato-trabajo-template.docx'));
+        $procesador = new TemplateProcessor($plantilla['ruta']);
         $procesador->setValue('NOMBRE_TRABAJADOR', mb_strtoupper($nombreCompleto));
         $procesador->setValue('DNI_TRABAJADOR', $empleado->documento_identidad);
         $procesador->setValue('DIRECCION_TRABAJADOR', mb_strtoupper((string) $empleado->direccion));
@@ -723,13 +841,69 @@ new #[Layout('layouts.panel')] class extends Component
                 @if ($pestanaDatosModal === 'contrato')
                     <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4">
                         <div class="mx-auto max-w-md rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                            <p class="mb-3 text-[11px] font-bold uppercase tracking-wide text-sky-700">Generar contrato de trabajo</p>
+                            <p class="mb-3 text-[11px] font-bold uppercase tracking-wide text-sky-700">Generar contrato</p>
+
+                            @php($contratoAreaModelo = $this->contratoAreaModelo())
+                            @php($contratoPlantilla = $this->contratoPlantillaInfo())
+
                             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div class="sm:col-span-2">
+                                    <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Área</label>
+                                    <select wire:model.live="contratoArea" class="form-input py-1.5 text-[11px] uppercase">
+                                        <option value="">Selecciona un área</option>
+                                        @foreach (\App\Models\Area::orderBy('nombre')->pluck('nombre') as $nombreArea)
+                                            <option value="{{ $nombreArea }}">{{ $nombreArea }}</option>
+                                        @endforeach
+                                    </select>
+                                    @error('contratoArea') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                </div>
+
+                                <div class="{{ $contratoAreaModelo?->usa_campana || $contratoAreaModelo?->usa_cargo ? '' : 'sm:col-span-2' }}">
                                     <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Puesto</label>
-                                    <input type="text" wire:model="contratoPuesto" class="form-input py-1.5 text-[11px] uppercase">
+                                    <select wire:model="contratoPuesto" class="form-input py-1.5 text-[11px] uppercase" @disabled(! $contratoAreaModelo)>
+                                        <option value="">Selecciona un puesto</option>
+                                        @foreach ($this->contratoPuestosDisponibles() as $nombrePuesto)
+                                            <option value="{{ $nombrePuesto }}">{{ $nombrePuesto }}</option>
+                                        @endforeach
+                                    </select>
                                     @error('contratoPuesto') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                 </div>
+
+                                @if ($contratoAreaModelo?->usa_campana)
+                                    <div>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Campaña</label>
+                                        <select wire:model="contratoCampana" class="form-input py-1.5 text-[11px] uppercase">
+                                            <option value="">Selecciona una campaña</option>
+                                            @foreach ($this->contratoCampanasDisponibles() as $nombreCampana)
+                                                <option value="{{ $nombreCampana }}">{{ $nombreCampana }}</option>
+                                            @endforeach
+                                        </select>
+                                        @error('contratoCampana') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
+
+                                @if ($contratoAreaModelo?->usa_cargo)
+                                    <div>
+                                        <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cargo</label>
+                                        <select wire:model="contratoCargo" class="form-input py-1.5 text-[11px] uppercase">
+                                            <option value="">Selecciona un cargo</option>
+                                            @foreach ($this->contratoCargosDisponibles() as $nombreCargo)
+                                                <option value="{{ $nombreCargo }}">{{ $nombreCargo }}</option>
+                                            @endforeach
+                                        </select>
+                                        @error('contratoCargo') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
+                                    </div>
+                                @endif
+
+                                @if ($contratoPlantilla)
+                                    <div class="sm:col-span-2 rounded-lg {{ $contratoPlantilla['existe'] ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700' }} px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide">
+                                        Tipo: {{ $contratoPlantilla['label'] }}
+                                        @unless ($contratoPlantilla['existe'])
+                                            — plantilla pendiente de subir
+                                        @endunless
+                                    </div>
+                                @endif
+
                                 <div class="sm:col-span-2">
                                     <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Remuneración mensual (S/)</label>
                                     <input type="number" step="0.01" min="0" wire:model="contratoRemuneracion" class="form-input py-1.5 text-[11px]" placeholder="Ej. 2000">

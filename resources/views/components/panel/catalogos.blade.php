@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Area;
 use App\Models\Campana;
 use App\Models\Cargo;
 use App\Models\Puesto;
@@ -10,12 +11,11 @@ use Livewire\Component;
 
 new #[Layout('layouts.panel')] class extends Component
 {
+    public ?int $areaSeleccionadaId = null;
+
     public string $nuevoPuestoNombre = '';
     public string $nuevaCampanaNombre = '';
     public string $nuevoCargoNombre = '';
-
-    public ?int $puestoSeleccionadoId = null;
-    public ?int $campanaSeleccionadaId = null;
 
     public ?int $editandoPuestoId = null;
     public string $editandoPuestoNombre = '';
@@ -30,54 +30,69 @@ new #[Layout('layouts.panel')] class extends Component
     {
         abort_unless(Auth::user()->esAdmin(), 403);
 
-        $this->puestoSeleccionadoId = Puesto::orderBy('nombre')->value('id');
+        $this->areaSeleccionadaId = Area::orderBy('nombre')->value('id');
     }
 
-    public function puestos()
+    public function areas()
     {
-        return Puesto::orderBy('nombre')->get();
+        return Area::orderBy('nombre')->get();
     }
 
-    public function campanasDelPuesto()
+    public function areaSeleccionada(): ?Area
     {
-        if (! $this->puestoSeleccionadoId) {
+        return $this->areaSeleccionadaId
+            ? $this->areas()->firstWhere('id', $this->areaSeleccionadaId)
+            : null;
+    }
+
+    public function puestosDelArea()
+    {
+        if (! $this->areaSeleccionadaId) {
             return collect();
         }
 
-        return Campana::where('puesto_id', $this->puestoSeleccionadoId)->orderBy('nombre')->get();
+        return Puesto::where('area_id', $this->areaSeleccionadaId)->orderBy('nombre')->get();
     }
 
-    public function cargosDeLaCampana()
+    public function campanasDelArea()
     {
-        if (! $this->campanaSeleccionadaId) {
+        if (! $this->areaSeleccionadaId) {
             return collect();
         }
 
-        return Cargo::where('campana_id', $this->campanaSeleccionadaId)->orderBy('nombre')->get();
+        return Campana::where('area_id', $this->areaSeleccionadaId)->orderBy('nombre')->get();
     }
 
-    public function seleccionarPuesto(int $id): void
+    public function cargosDelArea()
     {
-        $this->puestoSeleccionadoId = $id;
-        $this->campanaSeleccionadaId = null;
+        if (! $this->areaSeleccionadaId) {
+            return collect();
+        }
+
+        return Cargo::where('area_id', $this->areaSeleccionadaId)->orderBy('nombre')->get();
     }
 
-    public function seleccionarCampana(int $id): void
+    public function seleccionarArea(int $id): void
     {
-        $this->campanaSeleccionadaId = $id;
+        $this->areaSeleccionadaId = $id;
     }
 
     public function agregarPuesto(): void
     {
+        if (! $this->areaSeleccionadaId) {
+            return;
+        }
+
         $this->validate([
-            'nuevoPuestoNombre' => 'required|string|max:100|unique:puestos,nombre',
+            'nuevoPuestoNombre' => ['required', 'string', 'max:100', Rule::unique('puestos', 'nombre')->where(fn ($query) => $query->where('area_id', $this->areaSeleccionadaId))],
         ]);
 
-        $puesto = Puesto::create(['nombre' => $this->nuevoPuestoNombre]);
+        Puesto::create([
+            'nombre' => $this->nuevoPuestoNombre,
+            'area_id' => $this->areaSeleccionadaId,
+        ]);
 
         $this->reset(['nuevoPuestoNombre']);
-        $this->puestoSeleccionadoId = $puesto->id;
-        $this->campanaSeleccionadaId = null;
     }
 
     public function editarPuesto(int $id): void
@@ -93,11 +108,16 @@ new #[Layout('layouts.panel')] class extends Component
             return;
         }
 
+        $puesto = Puesto::findOrFail($this->editandoPuestoId);
+
         $this->validate([
-            'editandoPuestoNombre' => ['required', 'string', 'max:100', Rule::unique('puestos', 'nombre')->ignore($this->editandoPuestoId)],
+            'editandoPuestoNombre' => [
+                'required', 'string', 'max:100',
+                Rule::unique('puestos', 'nombre')->where(fn ($query) => $query->where('area_id', $puesto->area_id))->ignore($this->editandoPuestoId),
+            ],
         ]);
 
-        Puesto::whereKey($this->editandoPuestoId)->update(['nombre' => $this->editandoPuestoNombre]);
+        $puesto->update(['nombre' => $this->editandoPuestoNombre]);
 
         $this->cancelarEdicionPuesto();
     }
@@ -110,17 +130,17 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function agregarCampana(): void
     {
-        if (! $this->puestoSeleccionadoId) {
+        if (! $this->areaSeleccionadaId) {
             return;
         }
 
         $this->validate([
-            'nuevaCampanaNombre' => 'required|string|max:100|unique:campanas,nombre',
+            'nuevaCampanaNombre' => ['required', 'string', 'max:100', Rule::unique('campanas', 'nombre')->where(fn ($query) => $query->where('area_id', $this->areaSeleccionadaId))],
         ]);
 
         Campana::create([
             'nombre' => $this->nuevaCampanaNombre,
-            'puesto_id' => $this->puestoSeleccionadoId,
+            'area_id' => $this->areaSeleccionadaId,
         ]);
 
         $this->reset(['nuevaCampanaNombre']);
@@ -139,11 +159,16 @@ new #[Layout('layouts.panel')] class extends Component
             return;
         }
 
+        $campana = Campana::findOrFail($this->editandoCampanaId);
+
         $this->validate([
-            'editandoCampanaNombre' => ['required', 'string', 'max:100', Rule::unique('campanas', 'nombre')->ignore($this->editandoCampanaId)],
+            'editandoCampanaNombre' => [
+                'required', 'string', 'max:100',
+                Rule::unique('campanas', 'nombre')->where(fn ($query) => $query->where('area_id', $campana->area_id))->ignore($this->editandoCampanaId),
+            ],
         ]);
 
-        Campana::whereKey($this->editandoCampanaId)->update(['nombre' => $this->editandoCampanaNombre]);
+        $campana->update(['nombre' => $this->editandoCampanaNombre]);
 
         $this->cancelarEdicionCampana();
     }
@@ -156,20 +181,17 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function agregarCargo(): void
     {
-        if (! $this->campanaSeleccionadaId) {
+        if (! $this->areaSeleccionadaId) {
             return;
         }
 
         $this->validate([
-            'nuevoCargoNombre' => [
-                'required', 'string', 'max:100',
-                Rule::unique('cargos', 'nombre')->where(fn ($query) => $query->where('campana_id', $this->campanaSeleccionadaId)),
-            ],
+            'nuevoCargoNombre' => ['required', 'string', 'max:100', Rule::unique('cargos', 'nombre')->where(fn ($query) => $query->where('area_id', $this->areaSeleccionadaId))],
         ]);
 
         Cargo::create([
             'nombre' => $this->nuevoCargoNombre,
-            'campana_id' => $this->campanaSeleccionadaId,
+            'area_id' => $this->areaSeleccionadaId,
         ]);
 
         $this->reset(['nuevoCargoNombre']);
@@ -193,9 +215,7 @@ new #[Layout('layouts.panel')] class extends Component
         $this->validate([
             'editandoCargoNombre' => [
                 'required', 'string', 'max:100',
-                Rule::unique('cargos', 'nombre')
-                    ->where(fn ($query) => $query->where('campana_id', $cargo->campana_id))
-                    ->ignore($this->editandoCargoId),
+                Rule::unique('cargos', 'nombre')->where(fn ($query) => $query->where('area_id', $cargo->area_id))->ignore($this->editandoCargoId),
             ],
         ]);
 
@@ -214,18 +234,37 @@ new #[Layout('layouts.panel')] class extends Component
 
 <div class="space-y-5">
     <div class="card-panel-compact">
-        <h2 class="text-sm font-semibold text-slate-900">Puestos, campañas y cargos</h2>
+        <h2 class="text-sm font-semibold text-slate-900">Áreas, puestos, campañas y cargos</h2>
         <p class="mt-1 text-xs text-slate-500">
-            Selecciona un puesto para ver y administrar sus campañas; selecciona una campaña para ver y administrar sus cargos.
-            Las campañas sin ningún cargo registrado se guardan en "Gestión de candidatos" con cargo "-".
-            Los nombres se pueden editar, pero no eliminar, para no arrastrar en cascada las campañas/cargos que dependen de ellos.
+            Selecciona un área para ver y administrar sus puestos, campañas y cargos. Campaña y Cargo son independientes entre sí — cada área solo usa la(s) que le corresponde(n) (ej. Comercial usa Campaña pero no Cargo; Administrativo usa Cargo pero no Campaña).
+            Los nombres se pueden editar, pero no eliminar, para no arrastrar en cascada lo que dependa de ellos.
         </p>
     </div>
 
-    <div class="grid gap-5 lg:grid-cols-3">
-        {{-- Puestos --}}
+    <div class="card-panel-compact">
+        <h3 class="mb-2 text-sm font-semibold text-slate-900">Áreas</h3>
+        <div class="flex flex-wrap gap-2">
+            @foreach ($this->areas() as $area)
+                <button
+                    type="button"
+                    wire:click="seleccionarArea({{ $area->id }})"
+                    class="rounded-full border px-3 py-1.5 text-xs font-medium {{ $areaSeleccionadaId === $area->id ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 text-slate-600 hover:bg-slate-50' }}"
+                >
+                    {{ $area->nombre }}
+                </button>
+            @endforeach
+        </div>
+    </div>
+
+    <div class="grid gap-5 lg:grid-cols-2">
+        {{-- Puestos del área --}}
         <div class="card-panel-compact">
-            <h3 class="mb-2 text-sm font-semibold text-slate-900">Puestos</h3>
+            <h3 class="mb-2 text-sm font-semibold text-slate-900">
+                Puestos
+                @if ($this->areaSeleccionada())
+                    <span class="font-normal text-slate-400">— {{ $this->areaSeleccionada()->nombre }}</span>
+                @endif
+            </h3>
 
             <form wire:submit="agregarPuesto" class="mb-3 flex flex-wrap items-end gap-2">
                 <div class="flex-1">
@@ -237,7 +276,7 @@ new #[Layout('layouts.panel')] class extends Component
             </form>
 
             <div class="space-y-1">
-                @forelse ($this->puestos() as $puesto)
+                @forelse ($this->puestosDelArea() as $puesto)
                     @if ($editandoPuestoId === $puesto->id)
                         <form wire:key="puesto-editar-{{ $puesto->id }}" wire:submit="guardarEdicionPuesto" class="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5">
                             <input type="text" wire:model="editandoPuestoNombre" class="form-input flex-1 text-xs">
@@ -246,32 +285,30 @@ new #[Layout('layouts.panel')] class extends Component
                         </form>
                         @error('editandoPuestoNombre') <p class="form-error text-xs">{{ $message }}</p> @enderror
                     @else
-                        <div wire:key="puesto-{{ $puesto->id }}" class="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs {{ $puestoSeleccionadoId === $puesto->id ? 'bg-primary/10 text-primary' : 'hover:bg-slate-50' }}">
-                            <button type="button" wire:click="seleccionarPuesto({{ $puesto->id }})" class="flex-1 text-left font-medium">
-                                {{ $puesto->nombre }}
-                            </button>
+                        <div wire:key="puesto-{{ $puesto->id }}" class="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs hover:bg-slate-50">
+                            <span class="flex-1 font-medium">{{ $puesto->nombre }}</span>
                             <button type="button" wire:click="editarPuesto({{ $puesto->id }})" class="ml-2 font-medium text-slate-500 hover:opacity-80">
                                 Editar
                             </button>
                         </div>
                     @endif
                 @empty
-                    <p class="py-3 text-center text-xs text-slate-400">Aún no hay puestos.</p>
+                    <p class="py-3 text-center text-xs text-slate-400">Aún no hay puestos para esta área.</p>
                 @endforelse
             </div>
         </div>
 
-        {{-- Campañas del puesto seleccionado --}}
+        {{-- Campañas del área --}}
         <div class="card-panel-compact">
             <h3 class="mb-2 text-sm font-semibold text-slate-900">
                 Campañas
-                @if ($puestoSeleccionadoId)
-                    <span class="font-normal text-slate-400">— {{ $this->puestos()->firstWhere('id', $puestoSeleccionadoId)?->nombre }}</span>
+                @if ($this->areaSeleccionada())
+                    <span class="font-normal text-slate-400">— {{ $this->areaSeleccionada()->nombre }}</span>
                 @endif
             </h3>
 
-            @if (! $puestoSeleccionadoId)
-                <p class="py-3 text-center text-xs text-slate-400">Selecciona un puesto primero.</p>
+            @if ($this->areaSeleccionada() && ! $this->areaSeleccionada()->usa_campana)
+                <p class="py-3 text-center text-xs text-slate-400">Campaña no aplica para esta área.</p>
             @else
                 <form wire:submit="agregarCampana" class="mb-3 flex flex-wrap items-end gap-2">
                     <div class="flex-1">
@@ -283,7 +320,7 @@ new #[Layout('layouts.panel')] class extends Component
                 </form>
 
                 <div class="space-y-1">
-                    @forelse ($this->campanasDelPuesto() as $campana)
+                    @forelse ($this->campanasDelArea() as $campana)
                         @if ($editandoCampanaId === $campana->id)
                             <form wire:key="campana-editar-{{ $campana->id }}" wire:submit="guardarEdicionCampana" class="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5">
                                 <input type="text" wire:model="editandoCampanaNombre" class="form-input flex-1 text-xs">
@@ -292,33 +329,31 @@ new #[Layout('layouts.panel')] class extends Component
                             </form>
                             @error('editandoCampanaNombre') <p class="form-error text-xs">{{ $message }}</p> @enderror
                         @else
-                            <div wire:key="campana-{{ $campana->id }}" class="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs {{ $campanaSeleccionadaId === $campana->id ? 'bg-primary/10 text-primary' : 'hover:bg-slate-50' }}">
-                                <button type="button" wire:click="seleccionarCampana({{ $campana->id }})" class="flex-1 text-left font-medium">
-                                    {{ $campana->nombre }}
-                                </button>
+                            <div wire:key="campana-{{ $campana->id }}" class="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs hover:bg-slate-50">
+                                <span class="flex-1 font-medium">{{ $campana->nombre }}</span>
                                 <button type="button" wire:click="editarCampana({{ $campana->id }})" class="ml-2 font-medium text-slate-500 hover:opacity-80">
                                     Editar
                                 </button>
                             </div>
                         @endif
                     @empty
-                        <p class="py-3 text-center text-xs text-slate-400">Aún no hay campañas para este puesto.</p>
+                        <p class="py-3 text-center text-xs text-slate-400">Aún no hay campañas para esta área.</p>
                     @endforelse
                 </div>
             @endif
         </div>
 
-        {{-- Cargos de la campaña seleccionada --}}
-        <div class="card-panel-compact">
+        {{-- Cargos del área --}}
+        <div class="card-panel-compact lg:col-span-2">
             <h3 class="mb-2 text-sm font-semibold text-slate-900">
                 Cargos
-                @if ($campanaSeleccionadaId)
-                    <span class="font-normal text-slate-400">— {{ $this->campanasDelPuesto()->firstWhere('id', $campanaSeleccionadaId)?->nombre }}</span>
+                @if ($this->areaSeleccionada())
+                    <span class="font-normal text-slate-400">— {{ $this->areaSeleccionada()->nombre }}</span>
                 @endif
             </h3>
 
-            @if (! $campanaSeleccionadaId)
-                <p class="py-3 text-center text-xs text-slate-400">Selecciona una campaña primero.</p>
+            @if ($this->areaSeleccionada() && ! $this->areaSeleccionada()->usa_cargo)
+                <p class="py-3 text-center text-xs text-slate-400">Cargo no aplica para esta área.</p>
             @else
                 <form wire:submit="agregarCargo" class="mb-3 flex flex-wrap items-end gap-2">
                     <div class="flex-1">
@@ -329,15 +364,15 @@ new #[Layout('layouts.panel')] class extends Component
                     <button type="submit" class="btn-secondary w-auto px-3 py-1.5 text-xs">Agregar</button>
                 </form>
 
-                <div class="space-y-1">
-                    @forelse ($this->cargosDeLaCampana() as $cargo)
+                <div class="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
+                    @forelse ($this->cargosDelArea() as $cargo)
                         @if ($editandoCargoId === $cargo->id)
-                            <form wire:key="cargo-editar-{{ $cargo->id }}" wire:submit="guardarEdicionCargo" class="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5">
+                            <form wire:key="cargo-editar-{{ $cargo->id }}" wire:submit="guardarEdicionCargo" class="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 sm:col-span-2 lg:col-span-4">
                                 <input type="text" wire:model="editandoCargoNombre" class="form-input flex-1 text-xs">
                                 <button type="submit" class="text-xs font-medium text-primary hover:opacity-80">Guardar</button>
                                 <button type="button" wire:click="cancelarEdicionCargo" class="text-xs font-medium text-slate-500 hover:opacity-80">Cancelar</button>
                             </form>
-                            @error('editandoCargoNombre') <p class="form-error text-xs">{{ $message }}</p> @enderror
+                            @error('editandoCargoNombre') <p class="form-error text-xs sm:col-span-2 lg:col-span-4">{{ $message }}</p> @enderror
                         @else
                             <div wire:key="cargo-{{ $cargo->id }}" class="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs hover:bg-slate-50">
                                 <span class="flex-1 font-medium">{{ $cargo->nombre }}</span>
@@ -347,7 +382,7 @@ new #[Layout('layouts.panel')] class extends Component
                             </div>
                         @endif
                     @empty
-                        <p class="py-3 text-center text-xs text-slate-400">Sin cargos — se guardará como "-" en Gestión de candidatos.</p>
+                        <p class="col-span-full py-3 text-center text-xs text-slate-400">Aún no hay cargos para esta área.</p>
                     @endforelse
                 </div>
             @endif

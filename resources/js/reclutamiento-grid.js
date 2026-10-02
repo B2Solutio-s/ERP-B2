@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 
 const FIELD_KEYS = [
-    'mes', 'fecha_gestion', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'edad', 'nombres', 'apellidos',
+    'mes', 'fecha_gestion', 'agente_reclutador', 'area', 'puesto', 'campana', 'cargo', 'dni_ce', 'edad', 'nombres', 'apellidos',
     'numero_celular', 'distrito', 'observaciones', 'tipificacion', 'subtipificacion_rechazo',
     'aceptacion_entrevista', 'fecha_entrevista', 'hora_entrevista', 'asistio_entrevista',
     'fecha_reprogramada', 'asistio_entrevista_reprogramada',
@@ -11,6 +11,7 @@ const FIELD_LABELS = {
     mes: 'Mes',
     fecha_gestion: 'Fecha gestión',
     agente_reclutador: 'Agente reclutador',
+    area: 'Área',
     puesto: 'Puesto',
     campana: 'Campaña',
     cargo: 'Cargo',
@@ -48,12 +49,12 @@ const DISTRICTS = [
 ];
 
 const TEXT_FIELDS = new Set([
-    'agente_reclutador', 'puesto', 'campana', 'cargo', 'dni_ce', 'nombres', 'apellidos', 'numero_celular', 'distrito',
+    'agente_reclutador', 'area', 'puesto', 'campana', 'cargo', 'dni_ce', 'nombres', 'apellidos', 'numero_celular', 'distrito',
     'observaciones', 'tipificacion', 'subtipificacion_rechazo',
 ]);
 
 const SELECT_FIELDS = new Set([
-    'mes', 'agente_reclutador', 'puesto', 'campana', 'cargo', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
+    'mes', 'agente_reclutador', 'area', 'puesto', 'campana', 'cargo', 'distrito', 'tipificacion', 'subtipificacion_rechazo',
     'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada',
 ]);
 
@@ -75,8 +76,7 @@ const getJsonScript = (id, fallback) => {
     }
 };
 
-const getCampanas = () => getJsonScript('reclutamiento-campanas', []).filter(Boolean).map((value) => String(value).toUpperCase());
-const getPuestos = () => getJsonScript('reclutamiento-puestos', []).filter(Boolean).map((value) => String(value).toUpperCase());
+const getAreas = () => getJsonScript('reclutamiento-areas', []).filter(Boolean).map((value) => String(value).toUpperCase());
 const getAgentesReclutadores = () => getJsonScript('reclutamiento-agentes', []).filter(Boolean).map((value) => String(value).toUpperCase());
 
 const buscarEnMapa = (mapa, clave) => {
@@ -84,11 +84,21 @@ const buscarEnMapa = (mapa, clave) => {
     return entrada ? entrada[1] : [];
 };
 
-const campanasDelPuesto = (puesto) => buscarEnMapa(getJsonScript('reclutamiento-campanas-por-puesto', {}), puesto)
+const puestosDelArea = (area) => buscarEnMapa(getJsonScript('reclutamiento-puestos-por-area', {}), area)
     .map((value) => String(value).toUpperCase());
 
-const cargosDeLaCampana = (campana) => buscarEnMapa(getJsonScript('reclutamiento-cargos-por-campana', {}), campana)
+const campanasDelArea = (area) => buscarEnMapa(getJsonScript('reclutamiento-campanas-por-area', {}), area)
     .map((value) => String(value).toUpperCase());
+
+const cargosDelArea = (area) => buscarEnMapa(getJsonScript('reclutamiento-cargos-por-area', {}), area)
+    .map((value) => String(value).toUpperCase());
+
+const configDelArea = (area) => {
+    const mapa = getJsonScript('reclutamiento-areas-config', {});
+    const entrada = Object.entries(mapa).find(([key]) => key.toUpperCase() === String(area ?? '').toUpperCase());
+    return entrada ? entrada[1] : { usa_campana: true, usa_cargo: true };
+};
+
 const getTipificacionOptions = () => getJsonScript('reclutamiento-tipificacion-options', ['INTERESADO - APTO', 'NO INTERESADO', 'NO PASA FILTRO', 'NO CONTESTA']);
 const getSubtipificacionOptions = () => getJsonScript('reclutamiento-subtipificacion-options', ['NO CONTESTA', 'NO TIENE EXPERIENCIA', 'NO CALIFICA']);
 const getAsistioOptions = () => getJsonScript('reclutamiento-asistio-options', ['SI, APTO', 'SI, NO APTO', 'NO', 'REPROGRAMADO']);
@@ -402,14 +412,15 @@ const createCell = (key, value = '', row = {}) => {
     cell.value = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
     cell.className = 'w-full border-0 bg-transparent px-2 py-2 text-sm text-slate-700 outline-none';
 
-    if (key === 'cargo') {
-        const opciones = cargosDeLaCampana(row.campana);
-        if (opciones.length === 0) {
+    if (key === 'campana' || key === 'cargo') {
+        const config = configDelArea(row.area);
+        const aplica = key === 'campana' ? config.usa_campana : config.usa_cargo;
+        if (!aplica) {
             const unica = document.createElement('option');
-            unica.value = '-';
-            unica.textContent = '-';
+            unica.value = 'NO APLICA';
+            unica.textContent = 'NO APLICA';
             cell.appendChild(unica);
-            cell.value = '-';
+            cell.value = 'NO APLICA';
             cell.disabled = true;
             return cell;
         }
@@ -424,9 +435,10 @@ const createCell = (key, value = '', row = {}) => {
         const opcionesPorCampo = {
             mes: () => MONTHS,
             agente_reclutador: () => getAgentesReclutadores(),
-            puesto: () => getPuestos(),
-            campana: () => campanasDelPuesto(row.puesto),
-            cargo: () => cargosDeLaCampana(row.campana),
+            area: () => getAreas(),
+            puesto: () => puestosDelArea(row.area),
+            campana: () => campanasDelArea(row.area),
+            cargo: () => cargosDelArea(row.area),
             distrito: () => DISTRICTS,
             tipificacion: () => getTipificacionOptions(),
             subtipificacion_rechazo: () => getSubtipificacionOptions(),
@@ -566,32 +578,37 @@ const repoblarOpciones = (select, opciones, valorPreferido = '') => {
     return valorFinal;
 };
 
-const actualizarCargoEnCascada = (tr, row) => {
-    const cargoField = tr?.querySelector('[data-field="cargo"]');
-    if (!cargoField) return;
+const actualizarCampoDependienteDeArea = (tr, row, key, opciones, aplica) => {
+    const field = tr?.querySelector(`[data-field="${key}"]`);
+    if (!field) return;
 
-    const opciones = cargosDeLaCampana(row.campana);
-
-    if (opciones.length === 0) {
-        cargoField.innerHTML = '';
+    if (!aplica) {
+        field.innerHTML = '';
         const unica = document.createElement('option');
-        unica.value = '-';
-        unica.textContent = '-';
-        cargoField.appendChild(unica);
-        cargoField.value = '-';
-        cargoField.disabled = true;
-        row.cargo = '-';
+        unica.value = 'NO APLICA';
+        unica.textContent = 'NO APLICA';
+        field.appendChild(unica);
+        field.value = 'NO APLICA';
+        field.disabled = true;
+        row[key] = 'NO APLICA';
     } else {
-        row.cargo = repoblarOpciones(cargoField, opciones);
+        row[key] = repoblarOpciones(field, opciones);
     }
 };
 
-const actualizarCampanaEnCascada = (tr, row) => {
-    const campanaField = tr?.querySelector('[data-field="campana"]');
-    if (!campanaField) return;
+// Puesto, Campaña y Cargo son 3 catálogos hermanos filtrados por Área (no una
+// cadena Puesto -> Campaña -> Cargo), así que los 3 se repueblan en paralelo
+// cada vez que cambia el Área.
+const actualizarCamposPorArea = (tr, row) => {
+    const config = configDelArea(row.area);
 
-    row.campana = repoblarOpciones(campanaField, campanasDelPuesto(row.puesto));
-    actualizarCargoEnCascada(tr, row);
+    const puestoField = tr?.querySelector('[data-field="puesto"]');
+    if (puestoField) {
+        row.puesto = repoblarOpciones(puestoField, puestosDelArea(row.area));
+    }
+
+    actualizarCampoDependienteDeArea(tr, row, 'campana', campanasDelArea(row.area), config.usa_campana);
+    actualizarCampoDependienteDeArea(tr, row, 'cargo', cargosDelArea(row.area), config.usa_cargo);
 };
 
 const bindInput = (row, key, input, hiddenInput, rows) => {
@@ -618,12 +635,8 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             if (monthField) monthField.value = month;
         }
 
-        if (key === 'puesto') {
-            actualizarCampanaEnCascada(input.closest('tr'), row);
-        }
-
-        if (key === 'campana') {
-            actualizarCargoEnCascada(input.closest('tr'), row);
+        if (key === 'area') {
+            actualizarCamposPorArea(input.closest('tr'), row);
         }
 
         if (key === 'tipificacion' || key === 'asistio_entrevista' || key === 'nombres' || key === 'fecha_reprogramada' || key === 'aceptacion_entrevista') {
@@ -805,15 +818,16 @@ const isSelectColumn = (column) => SELECT_FIELDS.has(column) && column !== 'camp
 
 const isDateColumn = (column) => ['fecha_gestion', 'fecha_entrevista', 'fecha_reprogramada'].includes(column);
 
+const valoresUnicosDelMapa = (scriptId) => [...new Set(Object.values(getJsonScript(scriptId, {})).flat())]
+    .map((value) => String(value).toUpperCase());
+
 const getColumnOptionValues = (rows, column) => {
     if (column === 'mes') return MONTHS;
     if (column === 'agente_reclutador') return getAgentesReclutadores();
-    if (column === 'puesto') return getPuestos();
-    if (column === 'campana') return getCampanas();
-    if (column === 'cargo') {
-        const campanasPorPuesto = getJsonScript('reclutamiento-cargos-por-campana', {});
-        return [...new Set(Object.values(campanasPorPuesto).flat())].map((value) => String(value).toUpperCase());
-    }
+    if (column === 'area') return getAreas();
+    if (column === 'puesto') return valoresUnicosDelMapa('reclutamiento-puestos-por-area');
+    if (column === 'campana') return valoresUnicosDelMapa('reclutamiento-campanas-por-area');
+    if (column === 'cargo') return valoresUnicosDelMapa('reclutamiento-cargos-por-area');
     if (column === 'distrito') return DISTRICTS;
     if (column === 'tipificacion') return getTipificacionOptions();
     if (column === 'subtipificacion_rechazo') return getSubtipificacionOptions();

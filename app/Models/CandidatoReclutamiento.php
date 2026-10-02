@@ -28,6 +28,7 @@ class CandidatoReclutamiento extends Model
         'fecha_gestion',
         'base',
         'agente_reclutador',
+        'area',
         'puesto',
         'campana',
         'cargo',
