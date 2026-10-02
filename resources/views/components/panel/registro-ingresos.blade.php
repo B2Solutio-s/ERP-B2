@@ -308,6 +308,13 @@ new #[Layout('layouts.panel')] class extends Component
             }
         }
 
+        if ($this->contratoPuesto !== '') {
+            $puesto = Puesto::where('area_id', $area->id)->where('nombre', $this->contratoPuesto)->first();
+            if ($puesto?->tipo_contrato) {
+                return $puesto->tipo_contrato;
+            }
+        }
+
         return $area->tipo_contrato;
     }
 
@@ -423,7 +430,9 @@ new #[Layout('layouts.panel')] class extends Component
             $procesador->setValue('FECHA_FIN_CONTRATO', $this->fechaLarga($this->contratoFechaFin));
             $procesador->setValue('FECHA_FIRMA_CONTRATO', $this->fechaLarga($this->contratoFechaFirma));
         } elseif ($tipo === 'administrativo') {
-            $puestoCompleto = trim("{$this->contratoCargo} DE {$this->contratoPuesto}");
+            $puestoCompleto = $this->contratoCargo !== ''
+                ? "{$this->contratoCargo} DE {$this->contratoPuesto}"
+                : $this->contratoPuesto;
             $procesador->setValue('PUESTO_TRABAJADOR', mb_strtoupper($puestoCompleto));
             $procesador->setValue('DURACION_CONTRATO', $this->contratoDuracion);
             $procesador->setValue('FECHA_INICIO_CONTRATO', $this->fechaLarga($this->contratoFechaInicio));
@@ -921,7 +930,7 @@ new #[Layout('layouts.panel')] class extends Component
 
                                 <div class="{{ $contratoAreaModelo?->usa_campana || $contratoAreaModelo?->usa_cargo ? '' : 'sm:col-span-2' }}">
                                     <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Puesto</label>
-                                    <select wire:model="contratoPuesto" class="form-input py-1.5 text-[11px] uppercase" @disabled(! $contratoAreaModelo)>
+                                    <select wire:model.live="contratoPuesto" class="form-input py-1.5 text-[11px] uppercase" @disabled(! $contratoAreaModelo)>
                                         <option value="">Selecciona un puesto</option>
                                         @foreach ($this->contratoPuestosDisponibles() as $nombrePuesto)
                                             <option value="{{ $nombrePuesto }}">{{ $nombrePuesto }}</option>
@@ -933,7 +942,7 @@ new #[Layout('layouts.panel')] class extends Component
                                 @if ($contratoAreaModelo?->usa_campana)
                                     <div>
                                         <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Campaña</label>
-                                        <select wire:model="contratoCampana" class="form-input py-1.5 text-[11px] uppercase">
+                                        <select wire:model.live="contratoCampana" class="form-input py-1.5 text-[11px] uppercase">
                                             <option value="">Selecciona una campaña</option>
                                             @foreach ($this->contratoCampanasDisponibles() as $nombreCampana)
                                                 <option value="{{ $nombreCampana }}">{{ $nombreCampana }}</option>
@@ -946,7 +955,7 @@ new #[Layout('layouts.panel')] class extends Component
                                 @if ($contratoAreaModelo?->usa_cargo)
                                     <div>
                                         <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cargo</label>
-                                        <select wire:model="contratoCargo" class="form-input py-1.5 text-[11px] uppercase">
+                                        <select wire:model.live="contratoCargo" class="form-input py-1.5 text-[11px] uppercase">
                                             <option value="">Selecciona un cargo</option>
                                             @foreach ($this->contratoCargosDisponibles() as $nombreCargo)
                                                 <option value="{{ $nombreCargo }}">{{ $nombreCargo }}</option>
