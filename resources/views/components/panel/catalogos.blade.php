@@ -95,6 +95,12 @@ new #[Layout('layouts.panel')] class extends Component
         $this->reset(['nuevoPuestoNombre']);
     }
 
+    public function alternarCampanaPuesto(int $id): void
+    {
+        $puesto = Puesto::findOrFail($id);
+        $puesto->update(['usa_campana' => ! $puesto->usa_campana]);
+    }
+
     public function editarPuesto(int $id): void
     {
         $puesto = Puesto::findOrFail($id);
@@ -287,6 +293,12 @@ new #[Layout('layouts.panel')] class extends Component
                     @else
                         <div wire:key="puesto-{{ $puesto->id }}" class="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs hover:bg-slate-50">
                             <span class="flex-1 font-medium">{{ $puesto->nombre }}</span>
+                            @if ($this->areaSeleccionada()?->usa_campana)
+                                <label class="ml-2 flex cursor-pointer items-center gap-1 text-slate-500" title="Si se desmarca, este puesto no lleva campaña (NO APLICA)">
+                                    <input type="checkbox" wire:click="alternarCampanaPuesto({{ $puesto->id }})" @checked($puesto->usa_campana) class="h-3.5 w-3.5 rounded border-slate-300">
+                                    Usa campaña
+                                </label>
+                            @endif
                             <button type="button" wire:click="editarPuesto({{ $puesto->id }})" class="ml-2 font-medium text-slate-500 hover:opacity-80">
                                 Editar
                             </button>

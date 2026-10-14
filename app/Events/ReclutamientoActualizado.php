@@ -19,6 +19,8 @@ class ReclutamientoActualizado implements ShouldBroadcastNow
         public string $usuarioNombre,
         public bool $bloqueada = false,
         public array $filas = [],
+        public array $eliminadas = [],
+        public bool $completa = false,
     ) {
     }
 
@@ -41,6 +43,8 @@ class ReclutamientoActualizado implements ShouldBroadcastNow
             'usuarioNombre' => $this->usuarioNombre,
             'bloqueada' => $this->bloqueada,
             'filas' => $this->filas,
+            'eliminadas' => $this->eliminadas,
+            'completa' => $this->completa,
         ];
     }
 }

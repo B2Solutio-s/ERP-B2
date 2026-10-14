@@ -16,6 +16,7 @@ class Empleado extends Model
         'departamento',
         'fecha_ingreso',
         'documento_identidad',
+        'biometrico_id',
         'apellido_paterno',
         'apellido_materno',
         'nombres',

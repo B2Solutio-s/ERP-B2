@@ -93,6 +93,15 @@ const campanasDelArea = (area) => buscarEnMapa(getJsonScript('reclutamiento-camp
 const cargosDelArea = (area) => buscarEnMapa(getJsonScript('reclutamiento-cargos-por-area', {}), area)
     .map((value) => String(value).toUpperCase());
 
+const puestoSinCampana = (area, puesto) => {
+    if (!puesto) return false;
+
+    return buscarEnMapa(getJsonScript('reclutamiento-puestos-sin-campana', {}), area)
+        .some((nombre) => String(nombre).toUpperCase() === String(puesto).toUpperCase());
+};
+
+const campanaAplica = (row) => configDelArea(row.area).usa_campana && !puestoSinCampana(row.area, row.puesto);
+
 const configDelArea = (area) => {
     const mapa = getJsonScript('reclutamiento-areas-config', {});
     const entrada = Object.entries(mapa).find(([key]) => key.toUpperCase() === String(area ?? '').toUpperCase());
@@ -109,6 +118,11 @@ const SUBTIPIFICACION_ENABLED_WHEN = new Set(['NO INTERESADO', 'NO PASA FILTRO']
 const getCurrentUser = () => getJsonScript('reclutamiento-usuario', { id: null, nombre: '' });
 
 const isPersistedRow = (row) => row.id && /^\d+$/.test(String(row.id));
+
+// Una fila guardada solo se puede eliminar si no identifica a nadie ni avanzó en el proceso.
+const filaEliminable = (row) => !isPersistedRow(row)
+    || (!['dni_ce', 'nombres', 'apellidos', 'numero_celular'].some((campo) => String(row[campo] ?? '').trim() !== '')
+        && !row.graduado && !row.apto);
 
 const callLivewire = (method, ...params) => {
     const root = document.querySelector('[wire\\:id]');
@@ -204,11 +218,11 @@ const setupLockNotifications = () => {
         if (filaId) setRowLockState(filaId, Boolean(bloqueada), usuario || 'otro usuario');
     });
     window.addEventListener('fila-eliminacion-denegada', () => {
-        window.__reclutamientoNotify?.('No es posible eliminar candidatos ya guardados.', 'warning');
+        window.__reclutamientoNotify?.('No es posible eliminar candidatos con datos.', 'warning');
     });
     window.addEventListener('reclutamiento-filas-actualizadas', (event) => {
         const { filas } = event.detail || {};
-        if (filas) window.__reclutamientoApplyRows?.(filas);
+        if (filas) window.__reclutamientoApplyChanges?.(filas, []);
     });
 };
 
@@ -414,7 +428,7 @@ const createCell = (key, value = '', row = {}) => {
 
     if (key === 'campana' || key === 'cargo') {
         const config = configDelArea(row.area);
-        const aplica = key === 'campana' ? config.usa_campana : config.usa_cargo;
+        const aplica = key === 'campana' ? campanaAplica(row) : config.usa_cargo;
         if (!aplica) {
             const unica = document.createElement('option');
             unica.value = 'NO APLICA';
@@ -607,7 +621,7 @@ const actualizarCamposPorArea = (tr, row) => {
         row.puesto = repoblarOpciones(puestoField, puestosDelArea(row.area));
     }
 
-    actualizarCampoDependienteDeArea(tr, row, 'campana', campanasDelArea(row.area), config.usa_campana);
+    actualizarCampoDependienteDeArea(tr, row, 'campana', campanasDelArea(row.area), campanaAplica(row));
     actualizarCampoDependienteDeArea(tr, row, 'cargo', cargosDelArea(row.area), config.usa_cargo);
 };
 
@@ -637,6 +651,10 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
 
         if (key === 'area') {
             actualizarCamposPorArea(input.closest('tr'), row);
+        }
+
+        if (key === 'puesto') {
+            actualizarCampoDependienteDeArea(input.closest('tr'), row, 'campana', campanasDelArea(row.area), campanaAplica(row));
         }
 
         if (key === 'tipificacion' || key === 'asistio_entrevista' || key === 'nombres' || key === 'fecha_reprogramada' || key === 'aceptacion_entrevista') {
@@ -1324,8 +1342,8 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         removeButton.type = 'button';
         removeButton.dataset.removeRow = 'true';
         removeButton.setAttribute('aria-label', 'Eliminar candidato');
-        removeButton.title = isPersistedRow(row) ? 'No se pueden eliminar candidatos ya guardados' : 'Eliminar candidato';
-        removeButton.disabled = isPersistedRow(row);
+        removeButton.title = filaEliminable(row) ? 'Eliminar fila' : 'Solo se pueden eliminar filas sin datos del candidato';
+        removeButton.disabled = !filaEliminable(row);
         removeButton.className = 'inline-flex h-8 w-8 items-center justify-center rounded bg-rose-50 text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40';
         removeButton.innerHTML = `
             <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1338,8 +1356,8 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         `;
         removeButton.addEventListener('click', () => {
             if (removeButton.disabled || tr.dataset.locked === 'true') {
-                if (isPersistedRow(row)) {
-                    window.__reclutamientoNotify?.('No es posible eliminar candidatos ya guardados.', 'warning');
+                if (!filaEliminable(row)) {
+                    window.__reclutamientoNotify?.('No es posible eliminar candidatos con datos.', 'warning');
                 } else {
                     window.__reclutamientoNotify?.('Esta fila está siendo editada por otro usuario.', 'warning');
                 }
@@ -1348,6 +1366,10 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
 
             const index = rows.indexOf(row);
             if (index < 0) return;
+
+            if (isPersistedRow(row)) {
+                callLivewire('eliminarFila', Number(row.id));
+            }
 
             rows.splice(index, 1);
             renderTable(rows, tbody, hiddenInput, table);
@@ -1601,6 +1623,41 @@ const initializeGrid = () => {
         });
 
         rows.splice(0, rows.length, ...mergedRows, ...tempRowsToKeep);
+        renderTable(rows, tbody, hiddenInput, table);
+        setupColumnResizing(table);
+        syncHiddenInput(rows, hiddenInput);
+        window.__reclutamientoDirty = window.__reclutamientoDirtyRows?.size > 0;
+    };
+
+    // Mezcla solo las filas que cambiaron (o se eliminaron) sin tocar el resto de la tabla.
+    window.__reclutamientoApplyChanges = (cambiadas = [], eliminadas = []) => {
+        const dirtyIds = window.__reclutamientoDirtyRows || new Set();
+        const indiceDe = (id) => rows.findIndex((row) => String(row.id) === String(id));
+
+        cambiadas.map((row) => normalizeRow(row)).forEach((remota) => {
+            const indice = indiceDe(remota.id);
+
+            if (indice >= 0) {
+                rows[indice] = dirtyIds.has(String(remota.id)) ? { ...remota, ...rows[indice] } : remota;
+                return;
+            }
+
+            // Si la persona estaba escribiendo esta misma fila como nueva, se reemplaza por la guardada.
+            const identidad = getRowIdentityKey(remota);
+            const indiceTemporal = identidad
+                ? rows.findIndex((row) => !isPersistedRow(row) && getRowIdentityKey(row) === identidad)
+                : -1;
+            if (indiceTemporal >= 0) rows.splice(indiceTemporal, 1);
+
+            const primeraTemporal = rows.findIndex((row) => !isPersistedRow(row));
+            rows.splice(primeraTemporal >= 0 ? primeraTemporal : rows.length, 0, remota);
+        });
+
+        eliminadas.forEach((id) => {
+            const indice = indiceDe(id);
+            if (indice >= 0 && !dirtyIds.has(String(id))) rows.splice(indice, 1);
+        });
+
         renderTable(rows, tbody, hiddenInput, table);
         setupColumnResizing(table);
         syncHiddenInput(rows, hiddenInput);

@@ -47,7 +47,11 @@ window.Echo.channel('reclutamiento.candidatos')
         if (payload.tipo === 'tabla-actualizada') {
             const hasLocalDirtyRows = (window.__reclutamientoDirtyRows?.size || 0) > 0;
 
-            window.__reclutamientoApplyRows?.(payload.filas);
+            if (payload.completa) {
+                window.__reclutamientoApplyRows?.(payload.filas);
+            } else {
+                window.__reclutamientoApplyChanges?.(payload.filas, payload.eliminadas);
+            }
 
             if (hasLocalDirtyRows) {
                 window.__reclutamientoNotify?.(`${payload.usuarioNombre} guardó cambios. Se preservaron tus cambios locales en las filas que estabas editando.`, 'warning');
@@ -56,4 +60,9 @@ window.Echo.channel('reclutamiento.candidatos')
 
             window.__reclutamientoNotify?.(`Cambios sincronizados desde ${payload.usuarioNombre}.`);
         }
+    });
+
+window.Echo.channel('asistencia.marcaciones')
+    .listen('.asistencia.registrada', () => {
+        window.Livewire?.dispatch('asistencia-registrada');
     });

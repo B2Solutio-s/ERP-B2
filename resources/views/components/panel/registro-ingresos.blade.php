@@ -477,6 +477,25 @@ new #[Layout('layouts.panel')] class extends Component
             ->first();
     }
 
+    public function generarInvitacion(int $candidatoId): void
+    {
+        $candidato = CandidatoReclutamiento::where('apto', true)->find($candidatoId);
+        if (! $candidato) {
+            return;
+        }
+
+        $existente = OnboardingInvitation::where('reclutamiento_candidato_id', $candidatoId)->latest()->first();
+        if ($existente && ($existente->usado_en || $existente->estaVigente())) {
+            return;
+        }
+
+        $invitacion = OnboardingInvitation::generar($candidato->nombreCompleto(), $candidato->email);
+        $invitacion->update([
+            'reclutamiento_candidato_id' => $candidatoId,
+            'creado_por' => Auth::id(),
+        ]);
+    }
+
     public function abrirFicha(int $empleadoId): void
     {
         $this->empleadoModalId = $empleadoId;
@@ -577,6 +596,19 @@ new #[Layout('layouts.panel')] class extends Component
         return $area ? Puesto::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
     }
 
+    /** La campaña aplica si el área la usa y el puesto elegido no está marcado "sin campaña". */
+    public function contratoUsaCampana(): bool
+    {
+        $area = $this->contratoAreaModelo();
+        if (! $area?->usa_campana) {
+            return false;
+        }
+
+        $puesto = Puesto::where('area_id', $area->id)->where('nombre', $this->contratoPuesto)->first();
+
+        return $puesto?->usa_campana ?? true;
+    }
+
     public function contratoCampanasDisponibles()
     {
         $area = $this->contratoAreaModelo();
@@ -664,7 +696,7 @@ new #[Layout('layouts.panel')] class extends Component
         $this->validate([
             'contratoArea' => 'required|string',
             'contratoPuesto' => 'required|string|max:150',
-            'contratoCampana' => $area?->usa_campana ? 'required|string|max:150' : 'nullable|string|max:150',
+            'contratoCampana' => $this->contratoUsaCampana() ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoCargo' => $area?->usa_cargo ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoAreaPracticas' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
             'contratoUniversidad' => $tipo === 'practicas' ? 'required|string|max:150' : 'nullable|string|max:150',
@@ -695,7 +727,7 @@ new #[Layout('layouts.panel')] class extends Component
         $empleado->update([
             'contrato_area' => $this->contratoArea,
             'contrato_puesto' => $this->contratoPuesto,
-            'contrato_campana' => $area?->usa_campana ? $this->contratoCampana : null,
+            'contrato_campana' => $this->contratoUsaCampana() ? $this->contratoCampana : null,
             'contrato_cargo' => $area?->usa_cargo ? $this->contratoCargo : null,
             'contrato_duracion' => $tipo === 'administrativo' ? $duracionTexto : null,
             'contrato_area_practicas' => $tipo === 'practicas' ? $this->contratoAreaPracticas : null,
@@ -1105,12 +1137,14 @@ new #[Layout('layouts.panel')] class extends Component
                         <td>{{ $candidato->agente_reclutador ?: '-' }}</td>
                         <td>{{ $candidato->fecha_apto?->format('d/m/Y H:i') ?? '-' }}</td>
                         <td>
-                            @if ($invitacion)
-                                <span class="badge {{ $invitacion->estadoLabel() === 'vigente' ? 'badge-green' : 'badge-amber' }}">
-                                    {{ ucfirst($invitacion->estadoLabel()) }}
-                                </span>
+                            @if ($invitacion && $invitacion->estaVigente())
+                                <input type="text" readonly value="{{ route('onboarding.form', $invitacion->token) }}" onclick="this.select()" class="form-input w-56 py-1 text-xs" title="Clic para seleccionar y copiar el enlace" />
+                            @elseif ($invitacion?->usado_en)
+                                <span class="badge badge-green">Usada</span>
                             @else
-                                <span class="text-xs text-slate-400">Sin generar</span>
+                                <button type="button" wire:click="generarInvitacion({{ $candidato->id }})" class="btn-secondary w-auto">
+                                    {{ $invitacion ? 'Regenerar link' : 'Generar link de ficha' }}
+                                </button>
                             @endif
                         </td>
                         <td>
@@ -1226,7 +1260,7 @@ new #[Layout('layouts.panel')] class extends Component
                                     @error('contratoArea') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                 </div>
 
-                                <div class="{{ $contratoAreaModelo?->usa_campana || $contratoAreaModelo?->usa_cargo ? '' : 'sm:col-span-2' }}">
+                                <div class="{{ $this->contratoUsaCampana() || $contratoAreaModelo?->usa_cargo ? '' : 'sm:col-span-2' }}">
                                     <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Puesto</label>
                                     <select wire:model.live="contratoPuesto" class="form-input py-1.5 text-[11px] uppercase" @disabled(! $contratoAreaModelo)>
                                         <option value="">Selecciona un puesto</option>
@@ -1237,7 +1271,7 @@ new #[Layout('layouts.panel')] class extends Component
                                     @error('contratoPuesto') <p class="mt-0.5 text-[10px] text-rose-500">{{ $message }}</p> @enderror
                                 </div>
 
-                                @if ($contratoAreaModelo?->usa_campana)
+                                @if ($this->contratoUsaCampana())
                                     <div>
                                         <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Campaña</label>
                                         <select wire:model.live="contratoCampana" class="form-input py-1.5 text-[11px] uppercase">

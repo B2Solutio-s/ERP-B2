@@ -39,6 +39,8 @@ class CandidatoReclutamiento extends Model
         'apellidos',
         'numero_celular',
         'distrito',
+        'direccion',
+        'email',
         'experiencia',
         'observaciones',
         'tipificacion',

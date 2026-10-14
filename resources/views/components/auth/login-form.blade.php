@@ -26,7 +26,7 @@ new class extends Component
 
         session()->regenerate();
 
-        $this->redirect(route('panel'), navigate: true);
+        $this->redirect(route('proceso-reclutamiento'), navigate: true);
     }
 };
 ?>

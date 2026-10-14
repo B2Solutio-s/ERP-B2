@@ -29,6 +29,7 @@ new #[Layout('layouts.panel')] class extends Component
     public array $areas = [];
     public array $areasConfig = [];
     public array $puestosPorArea = [];
+    public array $puestosSinCampana = [];
     public array $campanasPorArea = [];
     public array $cargosPorArea = [];
     public array $agentesReclutadores = [];
@@ -106,6 +107,10 @@ new #[Layout('layouts.panel')] class extends Component
             ->mapWithKeys(fn ($area) => [$area->nombre => Puesto::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre')->values()->all()])
             ->all();
 
+        $this->puestosSinCampana = $areas
+            ->mapWithKeys(fn ($area) => [$area->nombre => Puesto::where('area_id', $area->id)->where('usa_campana', false)->pluck('nombre')->values()->all()])
+            ->all();
+
         $this->campanasPorArea = $areas
             ->mapWithKeys(fn ($area) => [$area->nombre => Campana::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre')->values()->all()])
             ->all();
@@ -139,7 +144,6 @@ new #[Layout('layouts.panel')] class extends Component
     {
         return CandidatoReclutamiento::query()
             ->orderBy('id')
-            ->limit(25)
             ->get();
     }
 
@@ -169,6 +173,18 @@ new #[Layout('layouts.panel')] class extends Component
             || ($candidato->asistio_entrevista === 'REPROGRAMADO' && $candidato->asistio_entrevista_reprogramada === 'SI, APTO');
     }
 
+    protected function puestoSinCampana(?string $area, ?string $puesto): bool
+    {
+        if (! $area || ! $puesto) {
+            return false;
+        }
+
+        return Puesto::where('usa_campana', false)
+            ->whereRaw('UPPER(nombre) = ?', [mb_strtoupper($puesto)])
+            ->whereHas('area', fn ($q) => $q->whereRaw('UPPER(nombre) = ?', [mb_strtoupper($area)]))
+            ->exists();
+    }
+
     protected function construirPayload(array $fila): array
     {
         $payload = [];
@@ -181,6 +197,10 @@ new #[Layout('layouts.panel')] class extends Component
             $payload[$campoTexto] = $payload[$campoTexto] === null
                 ? null
                 : mb_strtoupper(trim((string) $payload[$campoTexto]));
+        }
+
+        if ($this->puestoSinCampana($payload['area'], $payload['puesto'])) {
+            $payload['campana'] = 'NO APLICA';
         }
 
         if (! in_array($payload['tipificacion'], ['NO INTERESADO', 'NO PASA FILTRO'], true)) {
@@ -205,11 +225,23 @@ new #[Layout('layouts.panel')] class extends Component
             return;
         }
 
+        // Una fila nueva que solo tiene agente/mes/fecha/área… no se guarda hasta que tenga datos de la persona.
+        if (empty($fila['id']) || ! ctype_digit((string) $fila['id'])) {
+            if ($this->filaSinDatosDePersona($fila)) {
+                return;
+            }
+        }
+
         $payload = $this->construirPayload($fila);
 
         $candidato = ! empty($fila['id'])
             ? CandidatoReclutamiento::with('bloqueadoPor')->find($fila['id'])
             : null;
+
+        // Fila ya eliminada por otra persona: no se vuelve a crear.
+        if (! $candidato && ! empty($fila['id']) && ctype_digit((string) $fila['id'])) {
+            return;
+        }
 
         if (! $candidato && (! empty($payload['dni_ce']) || ! empty($payload['nombres']) || ! empty($payload['apellidos']))) {
             $candidato = $this->filaDuplicada($payload);
@@ -247,7 +279,7 @@ new #[Layout('layouts.panel')] class extends Component
             filaId: $candidato->id,
             usuarioId: Auth::id(),
             usuarioNombre: Auth::user()->name,
-            filas: $this->filasActuales(),
+            filas: [$this->filaDe($candidato->fresh('bloqueadoPor'))],
         ));
     }
 
@@ -295,7 +327,36 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function eliminarFila(int $id): void
     {
-        $this->dispatch('fila-eliminacion-denegada', filaId: $id);
+        $candidato = CandidatoReclutamiento::find($id);
+        if (! $candidato) {
+            return;
+        }
+
+        $bloqueoAjeno = $candidato->bloqueado_por_id
+            && $candidato->bloqueado_hasta?->isFuture()
+            && $candidato->bloqueado_por_id !== Auth::id();
+
+        // Solo se pueden eliminar filas huérfanas: sin datos de persona ni avance en el proceso.
+        $sinDatos = $this->filaSinDatosDePersona($candidato->only(['dni_ce', 'nombres', 'apellidos', 'numero_celular']))
+            && ! $candidato->apto
+            && ! $this->candidatoGraduadoACapacitacion($candidato)
+            && ! OnboardingInvitation::where('reclutamiento_candidato_id', $id)->exists();
+
+        if ($bloqueoAjeno || ! $sinDatos) {
+            $this->dispatch('fila-eliminacion-denegada', filaId: $id);
+
+            return;
+        }
+
+        $candidato->delete();
+
+        broadcast(new ReclutamientoActualizado(
+            tipo: 'tabla-actualizada',
+            filaId: $id,
+            usuarioId: Auth::id(),
+            usuarioNombre: Auth::user()->name,
+            eliminadas: [$id],
+        ))->toOthers();
     }
 
     public function guardarBase(): void
@@ -362,13 +423,20 @@ new #[Layout('layouts.panel')] class extends Component
             usuarioId: Auth::id(),
             usuarioNombre: Auth::user()->name,
             filas: $this->filasActuales(),
+            completa: true,
         ));
         $this->dispatch('reclutamiento-guardado');
     }
 
     protected function filasActuales(): array
     {
-        return $this->candidatos()->map(fn ($candidato) => [
+        return $this->candidatos()->map(fn ($candidato) => $this->filaDe($candidato))->all();
+    }
+
+    /** Representación de una sola fila de la grilla (lo que viaja por Reverb al guardar). */
+    protected function filaDe(CandidatoReclutamiento $candidato): array
+    {
+        return [
             'id' => $candidato->id,
             'mes' => $candidato->mes,
             'fecha_gestion' => $candidato->fecha_gestion?->format('Y-m-d'),
@@ -398,7 +466,19 @@ new #[Layout('layouts.panel')] class extends Component
             'graduado' => $this->candidatoGraduadoACapacitacion($candidato),
             'no_apto_capacitacion' => $candidato->noAptoEnCapacitacion(),
             'no_apto_detalle' => $candidato->detalleNoAptoCapacitacion(),
-        ])->all();
+        ];
+    }
+
+    /** Sin DNI, nombres, apellidos ni celular: no identifica a nadie. */
+    protected function filaSinDatosDePersona(array $fila): bool
+    {
+        foreach (['dni_ce', 'nombres', 'apellidos', 'numero_celular'] as $campo) {
+            if (trim((string) ($fila[$campo] ?? '')) !== '') {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     protected function filaVacia(array $fila): bool
@@ -722,14 +802,16 @@ new #[Layout('layouts.panel')] class extends Component
 
         $this->capacitaciones[$id] = $this->valoresCapacitacion($candidato);
 
-        $this->dispatch('reclutamiento-filas-actualizadas', filas: $this->filasActuales());
+        $fila = $this->filaDe($candidato->fresh('bloqueadoPor'));
+
+        $this->dispatch('reclutamiento-filas-actualizadas', filas: [$fila]);
 
         broadcast(new ReclutamientoActualizado(
             tipo: 'tabla-actualizada',
             filaId: $candidato->id,
             usuarioId: Auth::id(),
             usuarioNombre: Auth::user()->name,
-            filas: $this->filasActuales(),
+            filas: [$fila],
         ));
     }
 
@@ -856,6 +938,7 @@ new #[Layout('layouts.panel')] class extends Component
             <script type="application/json" id="reclutamiento-areas">@json($areas)</script>
             <script type="application/json" id="reclutamiento-areas-config">@json($areasConfig)</script>
             <script type="application/json" id="reclutamiento-puestos-por-area">@json($puestosPorArea)</script>
+            <script type="application/json" id="reclutamiento-puestos-sin-campana">@json($puestosSinCampana)</script>
             <script type="application/json" id="reclutamiento-campanas-por-area">@json($campanasPorArea)</script>
             <script type="application/json" id="reclutamiento-cargos-por-area">@json($cargosPorArea)</script>
             <script type="application/json" id="reclutamiento-agentes">@json($agentesReclutadores)</script>

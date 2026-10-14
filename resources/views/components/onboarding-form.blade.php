@@ -116,26 +116,27 @@ new class extends Component
             }
 
             $this->documento_identidad = (string) ($candidato->dni_ce ?? '');
+            $this->direccion = (string) ($candidato->direccion ?? '');
+            $this->fecha_nacimiento = $candidato->fecha_nacimiento?->format('Y-m-d') ?? '';
+            $this->email = $this->email !== '' ? $this->email : (string) ($candidato->email ?? '');
             $this->celular_llamadas = (string) ($candidato->numero_celular ?? '');
             $this->celular_whatsapp = (string) ($candidato->numero_celular ?? '');
             $this->campana = (string) ($candidato->campana ?? '');
             $this->fecha_capa = $candidato->capacitacion_1?->format('Y-m-d') ?? '';
 
-            $puestoCategoria = trim((string) ($candidato->puesto ?? ''));
-            $cargoCandidato = trim((string) ($candidato->cargo ?? ''));
-            $tieneCargo = $cargoCandidato !== '' && $cargoCandidato !== '-';
+            $esValor = fn (?string $v) => ! in_array(mb_strtoupper(trim((string) $v)), ['', '-', 'NO APLICA'], true);
 
-            if (mb_strtolower($puestoCategoria) === 'ejecutivo' && $this->campana !== '') {
-                // Ejecutivo: "Ejecutivo - Móvil" / "Ejecutivo - Fija"
-                $this->puesto = "{$puestoCategoria} - {$this->campana}";
-                $this->puestoBloqueado = true;
-            } elseif ($tieneCargo && $this->campana !== '') {
-                // Administrativo con cargo real: "Practicante - TI" / "Coordinador - MKT"
-                $this->puesto = "{$cargoCandidato} - {$this->campana}";
-                $this->puestoBloqueado = true;
-            } elseif ($this->campana !== '') {
-                // Administrativo sin cargo (MC, Supervisor): solo el nombre de la campaña
-                $this->puesto = $this->campana;
+            $puestoCategoria = trim((string) ($candidato->puesto ?? ''));
+            $cargoCandidato = $esValor($candidato->cargo) ? trim((string) $candidato->cargo) : '';
+
+            if (! $esValor($this->campana)) {
+                $this->campana = '';
+            }
+
+            if ($puestoCategoria !== '') {
+                // "Ejecutivo - Móvil", "Practicante - TI", "Gerente Comercial", "Supervisor - Fija"
+                $puesto = $cargoCandidato !== '' ? "{$cargoCandidato} - {$puestoCategoria}" : $puestoCategoria;
+                $this->puesto = $this->campana !== '' ? "{$puesto} - {$this->campana}" : $puesto;
                 $this->puestoBloqueado = true;
             }
 
@@ -738,6 +739,11 @@ new class extends Component
                     </div>
                 @elseif ($paso === 2)
                     <x-forms.section title="Sistema pensionario">
+                        <p class="text-xs text-slate-500 sm:col-span-2">
+                            ¿No recuerdas tu sistema pensionario o tu código CUSPP? Puedes consultarlos
+                            <a href="https://servicios.sbs.gob.pe/ReporteSituacionPrevisional/Afil_Consulta.aspx" target="_blank" rel="noopener noreferrer" class="font-medium text-primary underline hover:opacity-80">aquí (SBS)</a>.
+                        </p>
+
                         <x-forms.choice label="¿Estoy afiliado?" name="pension_afiliado" :options="['si' => 'Sí', 'no' => 'No']" live span />
 
                         @if ($pension_afiliado === 'si')
