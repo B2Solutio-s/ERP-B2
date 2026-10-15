@@ -124,6 +124,20 @@ const filaEliminable = (row) => !isPersistedRow(row)
     || (!['dni_ce', 'nombres', 'apellidos', 'numero_celular'].some((campo) => String(row[campo] ?? '').trim() !== '')
         && !row.graduado && !row.apto);
 
+// Misma regla que filaEliminable, pero leyendo lo que hay escrito en la fila (para refrescar el botón al editar o al guardar).
+const actualizarBotonEliminar = (tr) => {
+    const boton = tr?.querySelector('[data-remove-row]');
+    if (!boton) return;
+
+    const persistida = isPersistedRow({ id: tr.dataset.candidatoId });
+    const conDatos = ['dni_ce', 'nombres', 'apellidos', 'numero_celular']
+        .some((campo) => String(tr.querySelector(`[data-field="${campo}"]`)?.value ?? '').trim() !== '');
+    const eliminable = !persistida || (!conDatos && tr.dataset.graduated !== 'true');
+
+    boton.disabled = tr.dataset.locked === 'true' || !eliminable;
+    boton.title = eliminable ? 'Eliminar fila' : 'Solo se pueden eliminar filas sin datos del candidato';
+};
+
 const callLivewire = (method, ...params) => {
     const root = document.querySelector('[wire\\:id]');
     const componentId = root?.getAttribute('wire:id');
@@ -179,10 +193,7 @@ const setRowLockState = (rowId, locked, userName = '', ownerId = null) => {
         field.disabled = shouldLock;
     });
 
-    const removeButton = row.querySelector('[data-remove-row]');
-    if (removeButton) {
-        removeButton.disabled = shouldLock || isPersistedRow({ id: rowId });
-    }
+    actualizarBotonEliminar(row);
 
     const status = row.querySelector('[data-lock-status]');
     if (status) {
@@ -641,6 +652,8 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             row[key] = TEXT_FIELDS.has(key) ? input.value.toUpperCase() : input.value;
             if (TEXT_FIELDS.has(key)) input.value = row[key];
         }
+
+        actualizarBotonEliminar(input.closest('tr'));
 
         if (key === 'fecha_gestion') {
             const month = getMonthFromDate(input.value);

@@ -35,6 +35,7 @@ class Empleado extends Model
         'celular_llamadas',
         'celular_whatsapp',
         'email',
+        'email_corporativo',
         'contacto_emergencia_nombre',
         'contacto_emergencia_parentesco',
         'contacto_emergencia_telefono',

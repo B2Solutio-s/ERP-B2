@@ -613,6 +613,7 @@ new class extends Component
                 'celular_llamadas' => $this->celular_llamadas,
                 'celular_whatsapp' => $this->celular_whatsapp ?: null,
                 'email' => $this->email,
+                'email_corporativo' => $this->invitacion->candidatoReclutamiento?->email_corporativo,
                 'contacto_emergencia_nombre' => $this->contacto_emergencia_nombre,
                 'contacto_emergencia_parentesco' => $this->contacto_emergencia_parentesco ?: null,
                 'contacto_emergencia_telefono' => $this->contacto_emergencia_telefono,
@@ -634,6 +635,9 @@ new class extends Component
             $empleado->estudios()->createMany($this->filasConDatos($this->estudios));
             $empleado->empleosAnteriores()->createMany($this->filasConDatos($this->empleosAnteriores));
             $empleado->familiares()->createMany($this->filasConDatos($this->familiares));
+
+            // El correo corporativo ya pertenece al trabajador: deja de guardarse en el candidato.
+            $this->invitacion->candidatoReclutamiento?->update(['email_corporativo' => null]);
 
             $this->invitacion->update(['usado_en' => now()]);
         });

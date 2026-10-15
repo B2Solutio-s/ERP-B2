@@ -8,6 +8,7 @@ use App\Models\Cargo;
 use App\Models\Empleado;
 use App\Models\EmpleadoDocumentoCese;
 use App\Models\EmpleadoPeriodoContrato;
+use App\Services\EnvioInvitacionFicha;
 use App\Models\OnboardingInvitation;
 use App\Models\Puesto;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -22,6 +23,11 @@ use PhpOffice\PhpWord\TemplateProcessor;
 new #[Layout('layouts.panel')] class extends Component
 {
     use WithFileUploads;
+
+    /** IDs de candidatos marcados para el envío masivo del link de ficha. */
+    public array $seleccionados = [];
+
+    public string $mensajeEnvio = '';
 
     public ?int $empleadoModalId = null;
 
@@ -47,6 +53,10 @@ new #[Layout('layouts.panel')] class extends Component
     public string $pestanaDatosModal = 'datos';
 
     public string $cusppEdit = '';
+
+    public string $correoCorpEdit = '';
+
+    public string $correoCorpGuardado = '';
 
     public string $contratoArea = '';
 
@@ -477,6 +487,106 @@ new #[Layout('layouts.panel')] class extends Component
             ->first();
     }
 
+    public function correoConfigurado(): bool
+    {
+        return EnvioInvitacionFicha::configurado();
+    }
+
+    /** Candidatos APTOS que aún no llenan su ficha. */
+    protected function pendientesDeFicha()
+    {
+        return $this->candidatosAptos()->filter(fn ($c) => ! $this->invitacionDe($c)?->empleado);
+    }
+
+    public function hayEnviosEnCola(): bool
+    {
+        return OnboardingInvitation::whereNotNull('correo_encolado_at')
+            ->whereNull('correo_enviado_at')->whereNull('correo_error')->exists();
+    }
+
+    public function guardarCorreoCorporativo(): void
+    {
+        $candidato = $this->candidatoParaDatos();
+        if (! $candidato) {
+            return;
+        }
+
+        $this->correoCorpEdit = mb_strtolower(trim($this->correoCorpEdit));
+        $this->correoCorpGuardado = '';
+
+        $this->validate(['correoCorpEdit' => 'nullable|email:rfc|max:150'], [], ['correoCorpEdit' => 'correo corporativo']);
+
+        // Con ficha completada el correo vive en el trabajador; antes de eso espera en el candidato.
+        if ($empleado = $candidato->empleadoVinculado()) {
+            $empleado->update(['email_corporativo' => $this->correoCorpEdit ?: null]);
+            $candidato->update(['email_corporativo' => null]);
+        } else {
+            $candidato->update(['email_corporativo' => $this->correoCorpEdit ?: null]);
+        }
+
+        $this->correoCorpGuardado = $this->correoCorpEdit ? 'Correo guardado.' : 'Correo eliminado.';
+    }
+
+    public function seleccionarPendientes(string $puesto = ''): void
+    {
+        $this->seleccionados = $this->pendientesDeFicha()
+            ->filter(fn ($c) => $c->correoCorporativo() && ($puesto === '' || mb_strtoupper((string) $c->puesto) === mb_strtoupper($puesto)))
+            ->pluck('id')->map(fn ($id) => (string) $id)->values()->all();
+
+        $this->mensajeEnvio = count($this->seleccionados).' seleccionados (solo los que tienen correo corporativo y no han llenado su ficha).';
+    }
+
+    public function limpiarSeleccion(): void
+    {
+        $this->seleccionados = [];
+        $this->mensajeEnvio = '';
+    }
+
+    /** Devuelve null si se encoló, o el motivo por el que se omitió. */
+    protected function encolarEnvio(CandidatoReclutamiento $candidato): ?string
+    {
+        $correo = $candidato->correoCorporativo();
+        if (! $correo) {
+            return 'sin correo corporativo';
+        }
+
+        return app(EnvioInvitacionFicha::class)->encolar($candidato, $correo, 'actualizacion');
+    }
+
+    public function enviarLink(int $candidatoId): void
+    {
+        if (! $this->correoConfigurado()) {
+            $this->mensajeEnvio = 'El envío de correos todavía no está configurado en el servidor.';
+
+            return;
+        }
+
+        $candidato = CandidatoReclutamiento::where('apto', true)->find($candidatoId);
+        $motivo = $candidato ? $this->encolarEnvio($candidato) : 'no existe';
+
+        $this->mensajeEnvio = $motivo ? "No se envió: {$motivo}." : 'Correo en cola de envío.';
+    }
+
+    public function enviarSeleccionados(): void
+    {
+        if (! $this->correoConfigurado()) {
+            $this->mensajeEnvio = 'El envío de correos todavía no está configurado en el servidor.';
+
+            return;
+        }
+
+        $encolados = 0;
+        $omitidos = [];
+
+        foreach (CandidatoReclutamiento::where('apto', true)->whereIn('id', $this->seleccionados)->get() as $candidato) {
+            $motivo = $this->encolarEnvio($candidato);
+            $motivo ? $omitidos[] = $candidato->nombreCorto()." ({$motivo})" : $encolados++;
+        }
+
+        $this->seleccionados = [];
+        $this->mensajeEnvio = "{$encolados} correos en cola de envío.".($omitidos ? ' Omitidos: '.implode(', ', $omitidos).'.' : '');
+    }
+
     public function generarInvitacion(int $candidatoId): void
     {
         $candidato = CandidatoReclutamiento::where('apto', true)->find($candidatoId);
@@ -521,6 +631,8 @@ new #[Layout('layouts.panel')] class extends Component
 
         $candidato = CandidatoReclutamiento::find($candidatoId);
         $this->cusppEdit = (string) ($candidato ? $this->invitacionDe($candidato)?->empleado?->pension_cuspp : '');
+        $this->correoCorpEdit = (string) $candidato?->correoCorporativo();
+        $this->correoCorpGuardado = '';
     }
 
     public function cerrarDatos(): void
@@ -528,6 +640,8 @@ new #[Layout('layouts.panel')] class extends Component
         $this->datosModalId = null;
         $this->pestanaDatosModal = 'datos';
         $this->cusppEdit = '';
+        $this->correoCorpEdit = '';
+        $this->correoCorpGuardado = '';
     }
 
     public function guardarCuspp(): void
@@ -995,7 +1109,8 @@ new #[Layout('layouts.panel')] class extends Component
             'Provincia' => $empleado->provincia,
             'Departamento' => $empleado->departamento_residencia,
             'Celular de llamadas' => $empleado->celular_llamadas,
-            'Correo electrónico' => $empleado->email,
+            'Correo electrónico (personal)' => $empleado->email,
+            'Correo corporativo' => $empleado->email_corporativo,
             'Celular de WhatsApp' => $empleado->celular_whatsapp,
             'Contacto de emergencia' => $contactoEmergencia,
         ]);
@@ -1091,17 +1206,35 @@ new #[Layout('layouts.panel')] class extends Component
 
 <div class="space-y-6">
     <div>
-        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">RRHH</p>
         <h2 class="mt-2 text-2xl font-bold text-slate-900">Registro de ingresos</h2>
-        <p class="text-sm text-slate-500">Candidatos marcados como aptos en el proceso de capacitación y el estado de su invitación de alta.</p>
     </div>
 
-    <div class="card-panel !p-0 overflow-hidden">
+    @unless ($this->correoConfigurado())
+        <div class="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            El envío de correos aún no está configurado en el servidor (falta el SMTP). Mientras tanto puedes guardar los correos corporativos y copiar los links manualmente.
+        </div>
+    @endunless
+
+    <div class="flex flex-wrap items-center gap-2">
+        <button type="button" wire:click="seleccionarPendientes('EJECUTIVO')" class="btn-secondary w-auto">Seleccionar ejecutivos pendientes</button>
+        <button type="button" wire:click="seleccionarPendientes" class="btn-secondary w-auto">Seleccionar todos los pendientes</button>
+        <button type="button" wire:click="limpiarSeleccion" class="btn-secondary w-auto">Limpiar</button>
+        <button type="button" wire:click="enviarSeleccionados" wire:confirm="¿Enviar el link de ficha por correo a las personas seleccionadas?" class="btn-primary w-auto" @disabled(! $this->correoConfigurado())>
+            Enviar link a seleccionados
+        </button>
+        @if ($mensajeEnvio)
+            <span class="text-sm text-slate-600">{{ $mensajeEnvio }}</span>
+        @endif
+    </div>
+
+    <div class="card-panel !p-0 overflow-x-auto" @if ($this->hayEnviosEnCola()) wire:poll.5s @endif>
         <table class="data-table w-full">
             <thead>
                 <tr>
+                    <th></th>
                     <th>Nombre</th>
                     <th>DNI / C.E</th>
+                    <th>Puesto</th>
                     <th>Campaña</th>
                     <th>Agente reclutador</th>
                     <th>Fecha APTO</th>
@@ -1112,7 +1245,12 @@ new #[Layout('layouts.panel')] class extends Component
             <tbody>
                 @forelse ($this->candidatosAptos() as $candidato)
                     @php($invitacion = $this->invitacionDe($candidato))
-                    <tr>
+                    <tr wire:key="apto-{{ $candidato->id }}">
+                        <td>
+                            @unless ($invitacion?->empleado)
+                                <input type="checkbox" wire:model="seleccionados" value="{{ $candidato->id }}" class="h-4 w-4 rounded border-slate-300" aria-label="Seleccionar">
+                            @endunless
+                        </td>
                         <td class="font-medium text-slate-900">
                             <div class="flex items-center gap-2">
                                 <span>{{ trim("{$candidato->nombres} {$candidato->apellidos}") ?: 'Sin nombre' }}</span>
@@ -1133,10 +1271,12 @@ new #[Layout('layouts.panel')] class extends Component
                             </div>
                         </td>
                         <td>{{ $candidato->dni_ce ?: '-' }}</td>
+                        <td>{{ $candidato->puesto ?: '-' }}</td>
                         <td>{{ $candidato->campana ?: '-' }}</td>
                         <td>{{ $candidato->agente_reclutador ?: '-' }}</td>
-                        <td>{{ $candidato->fecha_apto?->format('d/m/Y H:i') ?? '-' }}</td>
+                        <td>{{ $candidato->fecha_apto?->format('d/m/Y') ?? '-' }}</td>
                         <td>
+                            <div class="space-y-1.5">
                             @if ($invitacion && $invitacion->estaVigente())
                                 <input type="text" readonly value="{{ route('onboarding.form', $invitacion->token) }}" onclick="this.select()" class="form-input w-56 py-1 text-xs" title="Clic para seleccionar y copiar el enlace" />
                             @elseif ($invitacion?->usado_en)
@@ -1146,6 +1286,31 @@ new #[Layout('layouts.panel')] class extends Component
                                     {{ $invitacion ? 'Regenerar link' : 'Generar link de ficha' }}
                                 </button>
                             @endif
+
+                                @unless ($invitacion?->empleado)
+                                    @php($estadoCorreo = $invitacion?->estadoCorreo() ?? 'sin-enviar')
+                                    @if ($estadoCorreo === 'enviado')
+                                        <p class="text-xs text-emerald-600">✔ Enviado a {{ $invitacion->correo_a }} · {{ $invitacion->correo_enviado_at->timezone('America/Lima')->format('d/m H:i') }}</p>
+                                    @elseif ($estadoCorreo === 'en-cola')
+                                        <p class="text-xs text-amber-600">Enviando a {{ $invitacion->correo_a }}…</p>
+                                    @elseif ($estadoCorreo === 'error')
+                                        <p class="text-xs text-rose-600" title="{{ $invitacion->correo_error }}">✖ Error al enviar a {{ $invitacion->correo_a }}</p>
+                                    @endif
+
+                                    @unless ($candidato->correoCorporativo())
+                                        <p class="text-xs text-slate-400">Sin correo corporativo (agrégalo en Datos).</p>
+                                    @endunless
+
+                                    @if ($candidato->correoCorporativo() && $this->correoConfigurado())
+                                        @php($textoEnvio = in_array($estadoCorreo, ['enviado', 'error'], true) ? 'Reenviar correo' : 'Enviar por correo')
+                                        <button type="button" wire:click="enviarLink({{ $candidato->id }})" wire:loading.attr="disabled" wire:target="enviarLink({{ $candidato->id }})" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 disabled:opacity-40" title="{{ $textoEnvio }}" aria-label="{{ $textoEnvio }}">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-send" viewBox="0 0 16 16" aria-hidden="true">
+                                                <path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>
+                                            </svg>
+                                        </button>
+                                    @endif
+                                @endunless
+                            </div>
                         </td>
                         <td>
                             @if ($invitacion?->empleado)
@@ -1163,7 +1328,7 @@ new #[Layout('layouts.panel')] class extends Component
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="7" class="px-4 py-8 text-center text-sm text-slate-400">
+                        <td colspan="9" class="px-4 py-8 text-center text-sm text-slate-400">
                             Todavía no hay candidatos marcados como aptos en Proceso de capacitación.
                         </td>
                     </tr>
@@ -1567,6 +1732,22 @@ new #[Layout('layouts.panel')] class extends Component
                 @else
                 <div class="flex min-h-0 flex-1">
                     <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4 space-y-3">
+                        <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                            <p class="mb-2 border-b border-slate-100 pb-1.5 text-[11px] font-bold uppercase tracking-wide text-sky-700">Correo corporativo</p>
+                            <form wire:submit.prevent="guardarCorreoCorporativo" class="flex items-end gap-2">
+                                <input type="email" wire:model="correoCorpEdit" class="form-input flex-1 py-1 text-[11px]" placeholder="correo@empresa.com">
+                                <button type="submit" wire:loading.attr="disabled" wire:target="guardarCorreoCorporativo" class="btn-secondary w-auto shrink-0 px-2 py-1 text-[10px]">
+                                    <span wire:loading.remove wire:target="guardarCorreoCorporativo">Guardar</span>
+                                    <span wire:loading wire:target="guardarCorreoCorporativo">...</span>
+                                </button>
+                            </form>
+                            @error('correoCorpEdit') <p class="form-error mt-1 text-[10px]">{{ $message }}</p> @enderror
+                            @if ($correoCorpGuardado)
+                                <p class="mt-1 text-[10px] text-emerald-600">{{ $correoCorpGuardado }}</p>
+                            @endif
+                            <p class="mt-1 text-[10px] text-slate-400">A este correo se envía el link para llenar la ficha de ingreso.</p>
+                        </div>
+
                         @foreach ($datosContacto['secciones'] as $tituloSeccion => $campos)
                             <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                                 <p class="mb-2 border-b border-slate-100 pb-1.5 text-[11px] font-bold uppercase tracking-wide text-sky-700">

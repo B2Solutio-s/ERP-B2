@@ -41,6 +41,7 @@ class CandidatoReclutamiento extends Model
         'distrito',
         'direccion',
         'email',
+        'email_corporativo',
         'experiencia',
         'observaciones',
         'tipificacion',
@@ -175,5 +176,20 @@ class CandidatoReclutamiento extends Model
     public function invitacionesOnboarding()
     {
         return $this->hasMany(OnboardingInvitation::class, 'reclutamiento_candidato_id');
+    }
+
+    /** El trabajador (ficha completada) de este candidato, si ya existe. */
+    public function empleadoVinculado(): ?Empleado
+    {
+        return Empleado::whereIn(
+            'onboarding_invitation_id',
+            OnboardingInvitation::where('reclutamiento_candidato_id', $this->id)->select('id'),
+        )->first();
+    }
+
+    /** Correo corporativo: del trabajador cuando ya existe; mientras no llena su ficha, el que espera en el candidato. */
+    public function correoCorporativo(): ?string
+    {
+        return $this->empleadoVinculado()?->email_corporativo ?: $this->email_corporativo;
     }
 }

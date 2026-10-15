@@ -9,6 +9,7 @@ use App\Models\Puesto;
 use App\Models\User;
 use App\Models\OnboardingInvitation;
 use App\Events\ReclutamientoActualizado;
+use App\Services\EnvioInvitacionFicha;
 use App\Services\QrCodeGenerator;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Auth;
@@ -89,6 +90,11 @@ new #[Layout('layouts.panel')] class extends Component
     public ?string $capacitacionFiltroApto = null;
 
     public ?int $fichaModalId = null;
+
+    /** Modal "Enviar link de ficha por correo" (Proceso de capacitación). */
+    public ?int $envioCandidatoId = null;
+
+    public string $envioCorreo = '';
 
     public function mount(): void
     {
@@ -815,6 +821,71 @@ new #[Layout('layouts.panel')] class extends Component
         ));
     }
 
+    public function correoConfigurado(): bool
+    {
+        return EnvioInvitacionFicha::configurado();
+    }
+
+    public function hayEnviosEnCola(): bool
+    {
+        return OnboardingInvitation::whereNotNull('correo_encolado_at')
+            ->whereNull('correo_enviado_at')->whereNull('correo_error')->exists();
+    }
+
+    public function abrirEnvioCorreo(int $candidatoId): void
+    {
+        $candidato = CandidatoReclutamiento::find($candidatoId);
+        if (! $candidato) {
+            return;
+        }
+
+        $this->resetErrorBag();
+        $this->envioCandidatoId = $candidatoId;
+        // Se propone el correo personal que ya se tenga; si no hay, el último al que se envió.
+        $this->envioCorreo = (string) ($candidato->email ?: $this->invitacionDe($candidatoId)?->correo_a);
+    }
+
+    public function cerrarEnvioCorreo(): void
+    {
+        $this->envioCandidatoId = null;
+        $this->envioCorreo = '';
+        $this->resetErrorBag();
+    }
+
+    public function envioCandidato(): ?CandidatoReclutamiento
+    {
+        return $this->envioCandidatoId ? CandidatoReclutamiento::find($this->envioCandidatoId) : null;
+    }
+
+    public function confirmarEnvioCorreo(): void
+    {
+        $candidato = $this->envioCandidato();
+        if (! $candidato) {
+            return;
+        }
+
+        if (! $this->correoConfigurado()) {
+            $this->addError('envioCorreo', 'El envío de correos todavía no está configurado en el servidor.');
+
+            return;
+        }
+
+        $this->envioCorreo = mb_strtolower(trim($this->envioCorreo));
+        $this->validate(['envioCorreo' => 'required|email:rfc|max:150'], [], ['envioCorreo' => 'correo']);
+
+        // El correo personal queda guardado en el candidato y precarga el campo "Correo electrónico" de su ficha.
+        $candidato->update(['email' => $this->envioCorreo]);
+
+        $motivo = app(EnvioInvitacionFicha::class)->encolar($candidato, $this->envioCorreo, 'ingreso');
+        if ($motivo) {
+            $this->addError('envioCorreo', "No se envió: {$motivo}.");
+
+            return;
+        }
+
+        $this->cerrarEnvioCorreo();
+    }
+
     public function generarInvitacionCapacitacion(int $id): void
     {
         $candidato = CandidatoReclutamiento::find($id);
@@ -1028,6 +1099,9 @@ new #[Layout('layouts.panel')] class extends Component
     </div>
 
     @if ($moduloActivo === 'capacitacion')
+        @if ($this->hayEnviosEnCola())
+            <div class="hidden" wire:poll.5s></div>
+        @endif
         <div class="mt-5">
             <div class="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
@@ -1211,6 +1285,23 @@ new #[Layout('layouts.panel')] class extends Component
                                                                 Generar invitación
                                                             </button>
                                                         @endif
+
+                                                        @unless ($invitacion?->empleado)
+                                                            @php($estadoCorreo = $invitacion?->estadoCorreo() ?? 'sin-enviar')
+                                                            @php($textoEnvio = in_array($estadoCorreo, ['enviado', 'error'], true) ? 'Reenviar correo' : 'Enviar link por correo')
+                                                            <button type="button" wire:click="abrirEnvioCorreo({{ $candidato->id }})" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-sky-600" title="{{ $textoEnvio }}" aria-label="{{ $textoEnvio }}">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-send" viewBox="0 0 16 16" aria-hidden="true">
+                                                                    <path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>
+                                                                </svg>
+                                                            </button>
+                                                            @if ($estadoCorreo === 'enviado')
+                                                                <span class="text-xs text-emerald-600">✔ Enviado a {{ $invitacion->correo_a }} · {{ $invitacion->correo_enviado_at->timezone('America/Lima')->format('d/m H:i') }}</span>
+                                                            @elseif ($estadoCorreo === 'en-cola')
+                                                                <span class="text-xs text-amber-600">Enviando a {{ $invitacion->correo_a }}…</span>
+                                                            @elseif ($estadoCorreo === 'error')
+                                                                <span class="text-xs text-rose-600" title="{{ $invitacion->correo_error }}">✖ Error al enviar a {{ $invitacion->correo_a }}</span>
+                                                            @endif
+                                                        @endunless
                                                     </div>
                                                 @endif
                                             </dl>
@@ -1317,6 +1408,46 @@ new #[Layout('layouts.panel')] class extends Component
                 <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-6">
                     <x-panel.ficha-ingreso :empleado="$this->fichaSeleccionada()" />
                 </div>
+            </div>
+        </div>
+    @endif
+    @if ($this->envioCandidato())
+        @php($envioCand = $this->envioCandidato())
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+            <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div class="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+                    <h3 class="text-sm font-semibold text-slate-900">Enviar link de ficha por correo</h3>
+                    <button type="button" wire:click="cerrarEnvioCorreo" class="text-slate-400 transition hover:text-slate-600" aria-label="Cerrar">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <form wire:submit.prevent="confirmarEnvioCorreo" class="space-y-4 p-5">
+                    <p class="text-sm text-slate-600">
+                        Se enviará el link para que <strong>{{ $envioCand->nombreCompleto() }}</strong> llene su ficha de ingreso.
+                    </p>
+
+                    @unless ($this->correoConfigurado())
+                        <div class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">El envío de correos aún no está configurado en el servidor.</div>
+                    @endunless
+
+                    <div>
+                        <label class="form-label" for="envio-correo">Correo personal</label>
+                        <input id="envio-correo" type="email" wire:model="envioCorreo" class="form-input" placeholder="correo@gmail.com" autocomplete="off">
+                        @error('envioCorreo') <p class="form-error mt-1 text-xs">{{ $message }}</p> @enderror
+                        <p class="mt-1 text-[11px] text-slate-400">Este correo también quedará como "Correo electrónico" en su ficha.</p>
+                    </div>
+
+                    <div class="flex justify-end gap-2">
+                        <button type="button" wire:click="cerrarEnvioCorreo" class="btn-secondary w-auto">Cancelar</button>
+                        <button type="submit" wire:loading.attr="disabled" wire:target="confirmarEnvioCorreo" class="btn-primary w-auto" @disabled(! $this->correoConfigurado())>
+                            <span wire:loading.remove wire:target="confirmarEnvioCorreo">Enviar</span>
+                            <span wire:loading wire:target="confirmarEnvioCorreo">Enviando...</span>
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     @endif

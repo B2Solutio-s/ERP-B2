@@ -53,6 +53,18 @@ services:
         depends_on:
             - mysql
             - reverb
+    cola:
+        image: 'sail-8.5/app'
+        entrypoint: []
+        command: php artisan queue:work --tries=3 --sleep=3 --max-time=3600
+        user: sail
+        restart: unless-stopped
+        volumes:
+            - '.:/var/www/html'
+        networks:
+            - sail
+        depends_on:
+            - mysql
     mysql:
         image: 'mysql:8.4'
         restart: unless-stopped

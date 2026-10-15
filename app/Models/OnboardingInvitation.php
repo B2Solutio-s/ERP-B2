@@ -15,6 +15,10 @@ class OnboardingInvitation extends Model
         'reclutamiento_candidato_id',
         'expira_en',
         'usado_en',
+        'correo_a',
+        'correo_encolado_at',
+        'correo_enviado_at',
+        'correo_error',
     ];
 
     protected function casts(): array
@@ -22,6 +26,8 @@ class OnboardingInvitation extends Model
         return [
             'expira_en' => 'datetime',
             'usado_en' => 'datetime',
+            'correo_encolado_at' => 'datetime',
+            'correo_enviado_at' => 'datetime',
         ];
     }
 
@@ -48,6 +54,20 @@ class OnboardingInvitation extends Model
     public function estaVigente(): bool
     {
         return is_null($this->usado_en) && $this->expira_en->isFuture();
+    }
+
+    /** 'sin-enviar' | 'en-cola' | 'enviado' | 'error' */
+    public function estadoCorreo(): string
+    {
+        if ($this->correo_error) {
+            return 'error';
+        }
+
+        if ($this->correo_enviado_at) {
+            return 'enviado';
+        }
+
+        return $this->correo_encolado_at ? 'en-cola' : 'sin-enviar';
     }
 
     public function estadoLabel(): string
