@@ -103,16 +103,6 @@
                         </td>
                     </tr>
 
-                    {{-- Enlace alterno --}}
-                    <tr>
-                        <td style="padding:0 38px 6px 38px;">
-                            @include('emails.partes.caja-ini', ['r' => 16, 'w' => 564, 'color' => '351591', 'estilo' => 'padding:0 22px 4px 22px;font-size:13px;line-height:1.5;color:#ffffff;'])
-                            <p style="margin:0 0 10px 0;color:#ffffff;">Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
-                            @include('emails.partes.capsula', ['w' => 520, 'h' => 42, 'arc' => 29, 'r' => 12, 'color' => 'eae5fd', 'texto' => $url, 'fs' => 11, 'txt' => '1c1050', 'peso' => 'normal', 'href' => $url])
-                            @include('emails.partes.caja-fin', ['r' => 16, 'w' => 564, 'color' => '351591'])
-                        </td>
-                    </tr>
-
                     {{-- Dudas --}}
                     <tr>
                         <td style="padding:0 38px 0 38px;">
