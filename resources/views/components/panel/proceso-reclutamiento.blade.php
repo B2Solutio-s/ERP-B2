@@ -1276,7 +1276,7 @@ new #[Layout('layouts.panel')] class extends Component
                                                                 </button>
                                                                 <span class="badge badge-green">Ficha respondida</span>
                                                             @else
-                                                                <button type="button" data-invitacion-toggle data-invitacion-link="{{ route('onboarding.form', $invitacion->token) }}" data-invitacion-estado="{{ $invitacion->estadoLabel() }}" data-invitacion-qr="{{ QrCodeGenerator::dataUri(route('onboarding.form', $invitacion->token)) }}" class="btn-secondary w-auto">
+                                                                <button type="button" data-invitacion-toggle data-invitacion-link="{{ $invitacion->url() }}" data-invitacion-estado="{{ $invitacion->estadoLabel() }}" data-invitacion-qr="{{ QrCodeGenerator::dataUri($invitacion->url()) }}" class="btn-secondary w-auto">
                                                                     Ver invitación
                                                                 </button>
                                                             @endif

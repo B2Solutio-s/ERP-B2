@@ -14,7 +14,6 @@ Cómo funciona:
 - Son 8 pasos y toma unos 10 a 15 minutos.
 - Al final firmas digitalmente.
 - Este enlace es personal y de un solo uso. Vence el {{ $expiraEn->timezone('America/Lima')->format('d/m/Y') }}.
-- Ábrelo desde la red de la oficina (wifi de la empresa).
 
 Si tienes dudas, escríbenos a rrhh@b2s.pe.
 

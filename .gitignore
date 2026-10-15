@@ -30,3 +30,9 @@ Thumbs.db
 /*.xlsx
 /*.docx
 /*.pdf
+
+# Llaves privadas: nunca al repositorio
+*.pem
+*.key
+id_rsa*
+id_ed25519*

@@ -41,6 +41,14 @@ class OnboardingInvitation extends Model
         ]);
     }
 
+    /** Link que recibe el trabajador: con la dirección pública si está configurada. */
+    public function url(): string
+    {
+        $base = rtrim((string) config('ficha.url_publica'), '/');
+
+        return $base !== '' ? $base.'/alta/'.$this->token : route('onboarding.form', $this->token);
+    }
+
     public function empleado()
     {
         return $this->hasOne(Empleado::class);

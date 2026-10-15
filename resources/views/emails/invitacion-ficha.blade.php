@@ -98,7 +98,6 @@
                                 <li>Son 8 pasos y toma unos 10 a 15 minutos.</li>
                                 <li>Al final firmas digitalmente con el dedo o el mouse.</li>
                                 <li>Este enlace es <strong>personal</strong> y de un solo uso. <strong>Vence el {{ $expiraEn->timezone('America/Lima')->format('d/m/Y') }}.</strong></li>
-                                <li>Ábrelo desde la red de la oficina (wifi de la empresa).</li>
                             </ul>
                             @include('emails.partes.caja-fin', ['r' => 16, 'w' => 564, 'color' => 'f2f4fd'])
                         </td>

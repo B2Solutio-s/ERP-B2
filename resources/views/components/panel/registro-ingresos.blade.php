@@ -1278,7 +1278,7 @@ new #[Layout('layouts.panel')] class extends Component
                         <td>
                             <div class="space-y-1.5">
                             @if ($invitacion && $invitacion->estaVigente())
-                                <input type="text" readonly value="{{ route('onboarding.form', $invitacion->token) }}" onclick="this.select()" class="form-input w-56 py-1 text-xs" title="Clic para seleccionar y copiar el enlace" />
+                                <input type="text" readonly value="{{ $invitacion->url() }}" onclick="this.select()" class="form-input w-56 py-1 text-xs" title="Clic para seleccionar y copiar el enlace" />
                             @elseif ($invitacion?->usado_en)
                                 <span class="badge badge-green">Usada</span>
                             @else

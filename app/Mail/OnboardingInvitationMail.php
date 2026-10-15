@@ -61,7 +61,7 @@ class OnboardingInvitationMail extends Mailable
             text: 'emails.invitacion-ficha-texto',
             with: [
                 'primerNombre' => $primerNombre !== '' ? $primerNombre : 'colaborador',
-                'url' => route('onboarding.form', $this->invitacion->token),
+                'url' => $this->invitacion->url(),
                 'expiraEn' => $this->invitacion->expira_en,
                 'v' => $this->variante(),
             ],

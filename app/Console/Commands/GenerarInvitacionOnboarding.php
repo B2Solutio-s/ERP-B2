@@ -19,7 +19,7 @@ class GenerarInvitacionOnboarding extends Command
             diasValidez: (int) $this->option('dias'),
         );
 
-        $url = route('onboarding.form', $invitacion->token);
+        $url = $invitacion->url();
 
         $this->info('Invitacion creada correctamente.');
         $this->line("Link: {$url}");
