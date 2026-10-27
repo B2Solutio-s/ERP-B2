@@ -25,7 +25,7 @@
                         </a>
                     @endif
 
-                    @if (auth()->user()->esAdmin())
+                    @if (auth()->user()->esGth() || auth()->user()->esAdmin())
                         <a href="{{ route('registro-ingresos') }}" class="sidebar-item {{ request()->routeIs('registro-ingresos') ? 'sidebar-item-active' : '' }}">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -34,7 +34,7 @@
                         </a>
                     @endif
 
-                    @if (auth()->user()->esGth() || auth()->user()->esAdmin())
+                    @if (auth()->user()->esAdmin())
                         <a href="{{ route('asistencia') }}" class="sidebar-item {{ request()->routeIs('asistencia') ? 'sidebar-item-active' : '' }}">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -87,6 +87,10 @@
                 </main>
             </div>
         </div>
+
+        @if (auth()->user()->esGth() || auth()->user()->esAdmin())
+            <livewire:panel.recordatorio-entrevistas />
+        @endif
 
         @livewireScripts
     </body>

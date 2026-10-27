@@ -42,6 +42,9 @@ class CandidatoReclutamiento extends Model
         'direccion',
         'email',
         'email_corporativo',
+        'cuenta_sueldo',
+        'cuenta_free',
+        'cci',
         'experiencia',
         'observaciones',
         'tipificacion',
@@ -68,6 +71,7 @@ class CandidatoReclutamiento extends Model
         'apto',
         'fecha_apto',
         'fecha_ingreso',
+        'periodos_iniciales',
         'bloqueado_por_id',
         'bloqueado_hasta',
     ];
@@ -83,6 +87,7 @@ class CandidatoReclutamiento extends Model
         'capacitacion_2_reprogramada' => 'date',
         'fecha_ingreso' => 'date',
         'apto' => 'boolean',
+        'periodos_iniciales' => 'array',
         'fecha_apto' => 'datetime',
         'bloqueado_hasta' => 'datetime',
     ];

@@ -4,6 +4,7 @@ use App\Models\Empleado;
 use App\Models\OnboardingInvitation;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Livewire\Attributes\Renderless;
 use Livewire\Component;
 
 new class extends Component
@@ -11,6 +12,9 @@ new class extends Component
     public OnboardingInvitation $invitacion;
 
     public bool $invalida = false;
+
+    /** Fecha del avance recuperado al abrir el link (si lo había). */
+    public string $borradorRecuperadoDe = '';
 
     public int $paso = 1;
 
@@ -88,6 +92,75 @@ new class extends Component
     public string $firma_dni = '';
     public string $firma_imagen = '';
 
+    /** Campos de texto cuyo avance se guarda (no incluye los que vienen del candidato ni la firma dibujada). */
+    private const BORRADOR_TEXTO = [
+        'documento_identidad', 'apellido_paterno', 'apellido_materno', 'nombres', 'fecha_nacimiento', 'lugar_nacimiento',
+        'edad', 'numero_hijos', 'estado_civil', 'sexo', 'direccion', 'vivienda_tipo', 'vivienda_tenencia', 'distrito',
+        'provincia', 'departamento_residencia', 'celular_llamadas', 'celular_whatsapp', 'email',
+        'contacto_emergencia_nombre', 'contacto_emergencia_parentesco', 'contacto_emergencia_telefono',
+        'pension_afiliado', 'pension_sistema', 'pension_afp', 'pension_cuspp',
+        'salud_antecedentes', 'salud_enfermedad_actual', 'salud_enfermedad_detalle', 'salud_medicamentos',
+        'declaracion_datos_veraces', 'declaracion_autoriza_verificacion', 'declaracion_capacitacion_condiciones',
+        'firma_dni',
+    ];
+
+    private const BORRADOR_LISTAS = ['estudios', 'empleosAnteriores', 'familiares'];
+
+    /**
+     * Guarda (cifrado) lo que la persona lleva escrito, para que pueda refrescar la página o volver a abrir el link
+     * y continuar donde se quedó. Se llama sola mientras escribe y al cambiar de paso. No vuelve a dibujar la página.
+     */
+    #[Renderless]
+    public function guardarBorrador(): void
+    {
+        if ($this->invalida || ! isset($this->invitacion) || ! $this->invitacion->fresh()?->estaVigente()) {
+            return;
+        }
+
+        $datos = ['paso' => $this->paso];
+
+        foreach (self::BORRADOR_TEXTO as $campo) {
+            $datos[$campo] = $this->{$campo};
+        }
+
+        foreach (self::BORRADOR_LISTAS as $lista) {
+            $datos[$lista] = $this->{$lista};
+        }
+
+        $this->invitacion->update(['borrador' => $datos, 'borrador_at' => now()]);
+
+        $this->dispatch('borrador-guardado', hora: now('America/Lima')->format('H:i'));
+    }
+
+    private function recuperarBorrador(): void
+    {
+        $borrador = $this->invitacion->borrador;
+
+        if (! is_array($borrador) || $borrador === []) {
+            return;
+        }
+
+        foreach (self::BORRADOR_TEXTO as $campo) {
+            if (isset($borrador[$campo]) && is_string($borrador[$campo])) {
+                $this->{$campo} = $borrador[$campo];
+            }
+        }
+
+        foreach (self::BORRADOR_LISTAS as $lista) {
+            if (isset($borrador[$lista]) && is_array($borrador[$lista]) && $borrador[$lista] !== []) {
+                $this->{$lista} = array_values(array_filter($borrador[$lista], 'is_array'));
+            }
+        }
+
+        if (isset($borrador['paso']) && is_int($borrador['paso'])) {
+            $this->paso = max(1, min(count($this->pasos), $borrador['paso']));
+        }
+
+        $this->borradorRecuperadoDe = $this->invitacion->borrador_at
+            ? $this->invitacion->borrador_at->timezone('America/Lima')->format('d/m/Y H:i')
+            : '';
+    }
+
     public function mount(string $token): void
     {
         $invitacion = OnboardingInvitation::where('token', $token)->first();
@@ -150,6 +223,8 @@ new class extends Component
         $this->estudios = array_fill(0, 2, $this->filaEstudioVacia());
         $this->empleosAnteriores = array_fill(0, 2, $this->filaEmpleoVacio());
         $this->familiares = array_fill(0, 4, $this->filaFamiliarVacia());
+
+        $this->recuperarBorrador();
     }
 
     private const CAMPOS_SIN_MAYUSCULA = [
@@ -183,6 +258,49 @@ new class extends Component
         data_set($this, $name, mb_strtoupper($value));
     }
 
+    /** Al elegir la fecha de nacimiento de un familiar, su edad se calcula sola. */
+    public function updatedFamiliares(mixed $value, ?string $key = null): void
+    {
+        // Livewire llama a este método con $key nulo cuando se reemplaza la lista completa: se recalculan todas las edades
+        if ($key === null) {
+            foreach ($this->familiares as $indice => $fila) {
+                if (is_array($fila) && ! empty($fila['fecha_nacimiento'])) {
+                    $this->familiares[$indice]['edad'] = $this->calcularEdad((string) $fila['fecha_nacimiento']);
+                }
+            }
+
+            return;
+        }
+
+        if (! str_ends_with($key, '.fecha_nacimiento')) {
+            return;
+        }
+
+        $indice = (int) explode('.', $key)[0];
+
+        if (isset($this->familiares[$indice])) {
+            $this->familiares[$indice]['edad'] = $this->calcularEdad((string) $value);
+        }
+    }
+
+    /** Años cumplidos a hoy (hora de Lima); vacío si la fecha no es válida o es futura. */
+    private function calcularEdad(string $fecha): string
+    {
+        if (trim($fecha) === '') {
+            return '';
+        }
+
+        try {
+            $nacimiento = \Illuminate\Support\Carbon::parse($fecha)->startOfDay();
+        } catch (\Throwable) {
+            return '';
+        }
+
+        $hoy = now('America/Lima')->startOfDay();
+
+        return $nacimiento->greaterThan($hoy) ? '' : (string) (int) floor($nacimiento->diffInYears($hoy));
+    }
+
     /**
      * Livewire no reenvía al servidor un campo "deferred" mientras el input sigue enfocado
      * (para no interrumpir al usuario), así que updated() puede no procesar el último valor
@@ -191,7 +309,9 @@ new class extends Component
      */
     private function normalizarMayusculas(): void
     {
-        foreach (get_object_vars($this) as $propiedad => $valor) {
+        // Solo propiedades públicas: get_object_vars() también devuelve las internas de Livewire (id, nombre del
+        // componente) y al pasarlas a mayúsculas la respuesta dejaba de corresponder al componente y nunca se procesaba.
+        foreach ($this->all() as $propiedad => $valor) {
             if (is_string($valor) && $valor !== '' && ! in_array($propiedad, self::CAMPOS_SIN_MAYUSCULA, true)) {
                 $this->{$propiedad} = mb_strtoupper($valor);
             }
@@ -494,8 +614,16 @@ new class extends Component
             'fecha_termino', 'motivo_cese', 'jefe_nombre', 'jefe_cargo', 'jefe_celular',
         ];
         $extra = [
+            'empresa' => 'string|max:255',
+            'cargo' => 'string|max:255',
+            'funcion_principal' => 'string|max:2000',
+            'sueldo' => 'string|max:255',
             'fecha_inicio' => 'date',
             'fecha_termino' => 'date',
+            'motivo_cese' => 'string|max:2000',
+            'jefe_nombre' => 'string|max:255',
+            'jefe_cargo' => 'string|max:255',
+            'jefe_celular' => 'string|max:255',
         ];
 
         $reglas = [];
@@ -558,6 +686,8 @@ new class extends Component
         if ($this->paso < count($this->pasos)) {
             $this->paso++;
         }
+
+        $this->guardarBorrador();
     }
 
     public function atras(): void
@@ -565,6 +695,8 @@ new class extends Component
         if ($this->paso > 1) {
             $this->paso--;
         }
+
+        $this->guardarBorrador();
     }
 
     private function filasConDatos(array $filas): array
@@ -580,12 +712,73 @@ new class extends Component
         ));
     }
 
+    /** Aviso fijo de errores del envío final (no vuelve a dibujar la ficha). */
+    private function avisarErrores(array $errores): void
+    {
+        $this->skipRender();
+        $this->dispatch('ficha-errores', errores: $errores);
+    }
+
+    /** @return array<int, array{paso: ?int, texto: string}> un mensaje por campo, con el paso donde se corrige */
+    private function resumenErrores(array $errores): array
+    {
+        $resumen = [];
+
+        foreach ($errores as $campo => $mensajes) {
+            $paso = null;
+
+            foreach (range(1, count($this->pasos)) as $n) {
+                foreach (array_keys($this->reglasPaso($n)) as $regla) {
+                    if (preg_match('/^'.str_replace('\*', '[^.]+', preg_quote($regla, '/')).'$/', $campo)) {
+                        $paso = $n;
+                        break 2;
+                    }
+                }
+            }
+
+            $resumen[] = ['paso' => $paso, 'texto' => ($paso ? 'Paso '.$paso.' · '.($this->pasos[$paso - 1] ?? '').': ' : '').$mensajes[0]];
+        }
+
+        return $resumen;
+    }
+
+    /** Lleva a la persona al paso indicado (desde el aviso de errores). */
+    public function irAPaso(int $paso): void
+    {
+        $this->paso = max(1, min(count($this->pasos), $paso));
+        $this->guardarBorrador();
+    }
+
     public function guardar(): void
     {
+        // Doble clic o reenvío: si la ficha ya se guardó, solo se muestra la confirmación (no se duplica nada)
+        if ($this->invitacion->fresh()?->usado_en) {
+            session()->flash('onboarding_nombre', $this->nombres);
+            $this->redirect(route('onboarding.enviado'), navigate: false);
+
+            return;
+        }
+
+        // El link venció mientras la página seguía abierta: no se acepta el envío (la vigencia también se revisa aquí, no solo al abrirla).
+        if (! $this->invitacion->fresh()?->estaVigente()) {
+            $this->avisarErrores([['paso' => null, 'texto' => 'Este link de registro venció, por eso no se puede enviar la ficha. Escribe a rrhh@b2s.pe para que te generen uno nuevo.']]);
+
+            return;
+        }
+
         $this->normalizarMayusculas();
 
-        $this->validate($this->todasLasReglas(), $this->mensajes());
+        try {
+            $this->validate($this->todasLasReglas(), $this->mensajes());
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Volver a dibujar toda la ficha (lleva la firma en base64) dejaba el botón en «Enviando…» sin mostrar el motivo:
+            // los errores se muestran en un aviso fijo, con acceso al paso donde está cada problema.
+            $this->avisarErrores($this->resumenErrores($e->errors()));
 
+            return;
+        }
+
+        try {
         DB::transaction(function () {
             $empleado = Empleado::create([
                 'onboarding_invitation_id' => $this->invitacion->id,
@@ -632,6 +825,15 @@ new class extends Component
                 'firma_imagen' => $this->firma_imagen,
             ]);
 
+            // Contratos ya firmados antes de que llenara su ficha: pasan a su historial de contrato
+            $candidatoFicha = $this->invitacion->candidatoReclutamiento;
+            if ($candidatoFicha && is_array($candidatoFicha->periodos_iniciales)) {
+                foreach ($candidatoFicha->periodos_iniciales as $periodo) {
+                    $empleado->periodosContrato()->create($periodo);
+                }
+                $candidatoFicha->update(['periodos_iniciales' => null]);
+            }
+
             $empleado->estudios()->createMany($this->filasConDatos($this->estudios));
             $empleado->empleosAnteriores()->createMany($this->filasConDatos($this->empleosAnteriores));
             $empleado->familiares()->createMany($this->filasConDatos($this->familiares));
@@ -639,8 +841,23 @@ new class extends Component
             // El correo corporativo ya pertenece al trabajador: deja de guardarse en el candidato.
             $this->invitacion->candidatoReclutamiento?->update(['email_corporativo' => null]);
 
-            $this->invitacion->update(['usado_en' => now()]);
+            $this->invitacion->update(['usado_en' => now(), 'borrador' => null, 'borrador_at' => null]);
+
+            // Si mientras tanto se generó otro link para el mismo candidato, deja de servir: así no queda «en espera de respuesta».
+            if ($this->invitacion->reclutamiento_candidato_id) {
+                OnboardingInvitation::where('reclutamiento_candidato_id', $this->invitacion->reclutamiento_candidato_id)
+                    ->whereKeyNot($this->invitacion->id)
+                    ->whereNull('usado_en')
+                    ->update(['expira_en' => now(), 'borrador' => null, 'borrador_at' => null]);
+            }
         });
+        } catch (\Throwable $e) {
+            // Se registra el error real y la persona ve un mensaje claro; su avance ya está guardado
+            report($e);
+            $this->avisarErrores([['paso' => null, 'texto' => 'No pudimos guardar tu ficha por un problema nuestro. Tu avance está guardado: espera un momento y vuelve a pulsar «Enviar registro». Si se repite, escríbenos a rrhh@b2s.pe.']]);
+
+            return;
+        }
 
         session()->flash('onboarding_nombre', $this->nombres);
 
@@ -674,9 +891,17 @@ new class extends Component
                     <p class="mt-1 text-sm text-slate-500">Completa tus datos para incorporarte a la empresa.</p>
 
                     <x-ui.wizard-steps-sidebar :pasos="$pasos" :actual="$paso" class="mt-8" />
+
+                    <p wire:ignore id="borrador-estado" class="mt-6 hidden text-xs text-emerald-600"></p>
+                    <p class="mt-2 text-xs text-slate-400">Tu avance se guarda solo: si recargas la página o vuelves a abrir el link, continuarás donde te quedaste.</p>
                 </aside>
 
                 <div class="onboarding-content">
+                @if ($borradorRecuperadoDe)
+                    <div class="mb-4 rounded-lg bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                        Retomamos tu ficha donde la dejaste (guardada el {{ $borradorRecuperadoDe }}). La firma debes volver a dibujarla al final.
+                    </div>
+                @endif
                 @if ($paso === 1)
                     <div class="space-y-6">
                         <x-forms.section title="Puesto al que ingresas">
@@ -836,8 +1061,8 @@ new class extends Component
                                         <tr wire:key="familiar-{{ $indice }}">
                                             <td><input type="text" wire:model="familiares.{{ $indice }}.nombres_apellidos" class="form-input"></td>
                                             <td><input type="text" wire:model="familiares.{{ $indice }}.parentesco" class="form-input"></td>
-                                            <td><input type="date" wire:model="familiares.{{ $indice }}.fecha_nacimiento" class="form-input"></td>
-                                            <td><input type="number" wire:model="familiares.{{ $indice }}.edad" class="form-input" min="0" max="120"></td>
+                                            <td><input type="date" wire:model.live="familiares.{{ $indice }}.fecha_nacimiento" class="form-input" max="{{ now('America/Lima')->toDateString() }}"></td>
+                                            <td><input type="number" wire:model="familiares.{{ $indice }}.edad" @class(['form-input', 'cursor-not-allowed bg-slate-100 text-slate-500' => ! empty($fila['fecha_nacimiento'])]) @readonly(! empty($fila['fecha_nacimiento'])) min="0" max="120" title="Se calcula con la fecha de nacimiento"></td>
                                             <td><input type="text" wire:model="familiares.{{ $indice }}.ocupacion" class="form-input"></td>
                                             <td class="text-center">
                                                 @if (count($familiares) > 1)
@@ -926,6 +1151,8 @@ new class extends Component
                     </div>
                 @endif
 
+                <div wire:ignore id="ficha-errores" class="mt-6 hidden rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert"></div>
+
                 <div class="mt-8 flex items-center justify-between">
                     <button type="button" wire:click="atras" class="btn-secondary" @if ($paso === 1) disabled @endif>
                         Atrás
@@ -950,6 +1177,52 @@ new class extends Component
 
     @script
     <script>
+        // Guarda el avance poco después de dejar de escribir, al ocultar la pestaña y al cambiar de paso (servidor).
+        let temporizadorBorrador = null;
+        const guardarAvance = () => { clearTimeout(temporizadorBorrador); $wire.guardarBorrador(); };
+        const programarAvance = () => { clearTimeout(temporizadorBorrador); temporizadorBorrador = setTimeout(guardarAvance, 2500); };
+        $wire.$el.addEventListener('input', programarAvance, true);
+        $wire.$el.addEventListener('change', programarAvance, true);
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') guardarAvance(); });
+        // Errores del envío final: aviso fijo con botón para ir al paso donde se corrige
+        $wire.on('ficha-errores', ({ errores }) => {
+            const aviso = document.getElementById('ficha-errores');
+            if (!aviso) return;
+
+            aviso.replaceChildren();
+            const titulo = document.createElement('p');
+            titulo.className = 'font-semibold';
+            titulo.textContent = errores.length > 1 ? 'Revisa estos puntos antes de enviar:' : 'Revisa este punto antes de enviar:';
+            aviso.appendChild(titulo);
+
+            const lista = document.createElement('ul');
+            lista.className = 'mt-2 space-y-1.5';
+            errores.forEach(({ paso, texto }) => {
+                const item = document.createElement('li');
+                item.className = 'flex flex-wrap items-center gap-2';
+                item.append(texto);
+                if (paso) {
+                    const ir = document.createElement('button');
+                    ir.type = 'button';
+                    ir.className = 'rounded-full border border-rose-300 px-2.5 py-0.5 text-xs font-semibold hover:bg-rose-100';
+                    ir.textContent = `Ir al paso ${paso}`;
+                    ir.addEventListener('click', () => { aviso.classList.add('hidden'); $wire.irAPaso(paso); });
+                    item.appendChild(ir);
+                }
+                lista.appendChild(item);
+            });
+            aviso.appendChild(lista);
+            aviso.classList.remove('hidden');
+            aviso.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+
+        $wire.on('borrador-guardado', ({ hora }) => {
+            const estado = document.getElementById('borrador-estado');
+            if (!estado) return;
+            estado.textContent = `✔ Avance guardado a las ${hora}`;
+            estado.classList.remove('hidden');
+        });
+
         // El guardado en BD siempre termina bien (confirmado por logs/DB), pero el
         // morph/diff del snapshot de este componente (firma en base64 + arrays de
         // estudios/empleos/familiares) puede reventar en el navegador antes de que

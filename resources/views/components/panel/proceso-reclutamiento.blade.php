@@ -40,6 +40,9 @@ new #[Layout('layouts.panel')] class extends Component
         'NO INTERESADO',
         'NO PASA FILTRO',
         'NO CONTESTA',
+        'APAGADO',
+        'FUERA DE SERVICIO',
+        'VOLVER A LLAMAR',
     ];
 
     public const SUBTIPIFICACION_OPTIONS = [
@@ -907,7 +910,7 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function invitacionDe(int $candidatoId): ?OnboardingInvitation
     {
-        return OnboardingInvitation::where('reclutamiento_candidato_id', $candidatoId)->latest()->first();
+        return OnboardingInvitation::principalDe($candidatoId);
     }
 
     public function abrirFicha(int $empleadoId): void
@@ -1020,15 +1023,16 @@ new #[Layout('layouts.panel')] class extends Component
 
             <div id="reclutamiento-grid-host" wire:ignore class="overflow-hidden rounded-xl border border-slate-200 bg-white">
                 <div class="reclutamiento-grid-scroll">
-                    <table id="reclutamiento-grid" class="min-w-[2400px] table-auto border-separate border-spacing-0 text-left text-sm">
+                    <table id="reclutamiento-grid" class="border-separate border-spacing-0 text-left text-sm">
                         <thead class="bg-slate-100 text-slate-700">
                             <tr>
+                                <th rowspan="2" data-col="numero" class="reclutamiento-row-number-head border-b border-slate-200 px-1 py-3 text-center text-xs font-medium text-slate-500" aria-label="Número de fila"></th>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-500 px-3 py-3 text-center text-white">GESTIÓN</th>
                                 <th colspan="5" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">BASE</th>
                                 <th colspan="7" class="border-b border-slate-200 bg-teal-800 px-3 py-3 text-center text-white">DATOS PRIMARIOS DE GESTIÓN</th>
                                 <th colspan="2" class="border-b border-slate-200 bg-slate-300 px-3 py-3 text-center text-slate-900">GESTIÓN DE LLAMADAS</th>
                                 <th colspan="6" class="border-b border-slate-200 bg-cyan-200 px-3 py-3 text-center text-slate-900">ENTREVISTA</th>
-                                <th rowspan="2" class="border-b border-slate-200 bg-slate-100 px-3 py-3 text-center text-slate-700">ACCIONES</th>
+                                <th rowspan="2" data-col="acciones" class="border-b border-slate-200 bg-slate-100 px-3 py-3 text-center text-slate-700">ACCIONES</th>
                             </tr>
                             <tr>
                                 <th class="whitespace-nowrap border-b border-slate-200 px-3 py-2 text-center">Mes</th>

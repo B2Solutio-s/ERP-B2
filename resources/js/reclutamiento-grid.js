@@ -108,7 +108,7 @@ const configDelArea = (area) => {
     return entrada ? entrada[1] : { usa_campana: true, usa_cargo: true };
 };
 
-const getTipificacionOptions = () => getJsonScript('reclutamiento-tipificacion-options', ['INTERESADO - APTO', 'NO INTERESADO', 'NO PASA FILTRO', 'NO CONTESTA']);
+const getTipificacionOptions = () => getJsonScript('reclutamiento-tipificacion-options', ['INTERESADO - APTO', 'NO INTERESADO', 'NO PASA FILTRO', 'NO CONTESTA', 'APAGADO', 'FUERA DE SERVICIO', 'VOLVER A LLAMAR']);
 const getSubtipificacionOptions = () => getJsonScript('reclutamiento-subtipificacion-options', ['NO CONTESTA', 'NO TIENE EXPERIENCIA', 'NO CALIFICA']);
 const getAsistioOptions = () => getJsonScript('reclutamiento-asistio-options', ['SI, APTO', 'SI, NO APTO', 'NO', 'REPROGRAMADO']);
 const getAsistioReprogramadaOptions = () => getAsistioOptions().filter((option) => option !== 'REPROGRAMADO');
@@ -435,7 +435,7 @@ const createCell = (key, value = '', row = {}) => {
     const cell = document.createElement(SELECT_FIELDS.has(key) ? 'select' : 'input');
     cell.dataset.field = key;
     cell.value = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
-    cell.className = 'w-full border-0 bg-transparent px-2 py-2 text-sm text-slate-700 outline-none';
+    cell.className = 'w-full border-0 bg-transparent px-2 py-2 text-sm font-semibold text-slate-800 outline-none';
 
     if (key === 'campana' || key === 'cargo') {
         const config = configDelArea(row.area);
@@ -636,6 +636,10 @@ const actualizarCamposPorArea = (tr, row) => {
     actualizarCampoDependienteDeArea(tr, row, 'cargo', cargosDelArea(row.area), config.usa_cargo);
 };
 
+const marcarInteresadoApto = (tr, row) => {
+    tr?.classList.toggle('reclutamiento-row-apto', String(row.tipificacion ?? '').toUpperCase() === 'INTERESADO - APTO');
+};
+
 const bindInput = (row, key, input, hiddenInput, rows) => {
     const update = () => {
         markRowDirty(row);
@@ -654,6 +658,10 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
         }
 
         actualizarBotonEliminar(input.closest('tr'));
+
+        if (key === 'tipificacion') {
+            marcarInteresadoApto(input.closest('tr'), row);
+        }
 
         if (key === 'fecha_gestion') {
             const month = getMonthFromDate(input.value);
@@ -725,10 +733,36 @@ const getContentColumnWidth = (table, header, columnIndex) => {
     return Math.max(72, Math.ceil(widestValue + controlsPadding + selectArrowSpace));
 };
 
-const setupColumnResizing = (table) => {
-    if (!table.style.width) {
-        table.style.width = 'max-content';
+const MIN_COLUMN_WIDTH = 48;
+const ANCHOS_KEY = 'reclutamiento.anchos-columnas';
+const NOMBRES_FIJO_KEY = 'reclutamiento.nombres-fijo';
+
+const leerPreferencia = (clave, porDefecto) => {
+    try {
+        const valor = window.localStorage.getItem(clave);
+        return valor === null ? porDefecto : JSON.parse(valor);
+    } catch {
+        return porDefecto;
     }
+};
+
+const guardarPreferencia = (clave, valor) => {
+    try {
+        window.localStorage.setItem(clave, JSON.stringify(valor));
+    } catch {
+        // sin almacenamiento: la preferencia dura solo esta sesión
+    }
+};
+
+const ajustarAnchoTabla = (table, colgroup) => {
+    const total = [...colgroup.children].reduce((suma, columna) => suma + (Number.parseFloat(columna.style.width) || 0), 0);
+    table.style.width = `${total}px`;
+};
+
+const setupColumnResizing = (table) => {
+    table.style.tableLayout = 'fixed';
+    // Antes del bucle: el encabezado de Nombres no debe recibir `relative`, que anularía su `sticky`.
+    prepararColumnaNombres(table);
 
     let colgroup = table.querySelector('colgroup');
     if (!colgroup) {
@@ -737,8 +771,12 @@ const setupColumnResizing = (table) => {
     }
 
     const detailHeaders = [...table.querySelectorAll('thead tr:last-child th')];
-    const actionHeader = table.querySelector('thead tr:first-child th[rowspan]');
-    const headers = actionHeader ? [...detailHeaders, actionHeader] : detailHeaders;
+    const numberHeader = table.querySelector('thead th[data-col="numero"]');
+    const actionHeader = table.querySelector('thead th[data-col="acciones"]');
+    const headers = [...(numberHeader ? [numberHeader] : []), ...detailHeaders, ...(actionHeader ? [actionHeader] : [])];
+    const fieldOffset = numberHeader ? 1 : 0;
+    const anchosGuardados = leerPreferencia(ANCHOS_KEY, {});
+
     headers.forEach((header, index) => {
         let column = colgroup.children[index];
         if (!column) {
@@ -746,18 +784,31 @@ const setupColumnResizing = (table) => {
             colgroup.appendChild(column);
         }
 
-        const contentWidth = getContentColumnWidth(table, header, index);
-        const currentWidth = Number.parseFloat(column.style.width) || 0;
-        const defaultWidth = DEFAULT_MINIMUM_COLUMN_WIDTHS[FIELD_KEYS[index]] || 0;
-        const minimumWidth = Math.max(contentWidth, defaultWidth);
-        const width = Math.max(currentWidth, minimumWidth);
-        column.style.width = `${width}px`;
-        column.style.minWidth = `${minimumWidth}px`;
+        if (header === numberHeader) {
+            column.style.width = '52px';
+            return;
+        }
+
+        const clave = header === actionHeader ? 'acciones' : FIELD_KEYS[index - fieldOffset];
+        const anchoGuardado = Number(anchosGuardados[clave]);
+
+        // Un ancho elegido por el usuario manda; mientras no exista, la columna crece para mostrar su contenido.
+        if (anchoGuardado >= MIN_COLUMN_WIDTH && column.dataset.manual !== 'true') {
+            column.dataset.manual = 'true';
+            column.style.width = `${anchoGuardado}px`;
+        }
+
+        if (column.dataset.manual !== 'true') {
+            const contentWidth = getContentColumnWidth(table, header, index);
+            const currentWidth = Number.parseFloat(column.style.width) || 0;
+            const defaultWidth = DEFAULT_MINIMUM_COLUMN_WIDTHS[clave] || 0;
+            column.style.width = `${Math.max(currentWidth, contentWidth, defaultWidth)}px`;
+        }
 
         if (header.dataset.resizable === 'true') return;
 
         header.dataset.resizable = 'true';
-        header.classList.add('relative');
+        if (!header.classList.contains('reclutamiento-col-nombres')) header.classList.add('relative');
         const handle = document.createElement('span');
         handle.className = 'absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none hover:bg-sky-200';
         handle.setAttribute('aria-label', 'Ajustar ancho de columna');
@@ -766,18 +817,17 @@ const setupColumnResizing = (table) => {
             handle.setPointerCapture(event.pointerId);
             const startX = event.clientX;
             const startWidth = column.getBoundingClientRect().width;
-            const startTableWidth = table.getBoundingClientRect().width;
 
             const resize = (moveEvent) => {
-                const delta = moveEvent.clientX - startX;
-                const nextWidth = Math.max(minimumWidth, startWidth + delta);
-                column.style.width = `${nextWidth}px`;
-                table.style.width = `${Math.max(table.scrollWidth, startTableWidth + delta)}px`;
+                column.style.width = `${Math.max(MIN_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX)}px`;
+                column.dataset.manual = 'true';
+                ajustarAnchoTabla(table, colgroup);
             };
             const stop = () => {
                 handle.removeEventListener('pointermove', resize);
                 handle.removeEventListener('pointerup', stop);
                 handle.removeEventListener('pointercancel', stop);
+                guardarPreferencia(ANCHOS_KEY, { ...leerPreferencia(ANCHOS_KEY, {}), [clave]: Number.parseFloat(column.style.width) });
             };
 
             handle.addEventListener('pointermove', resize);
@@ -786,6 +836,43 @@ const setupColumnResizing = (table) => {
         });
         header.appendChild(handle);
     });
+
+    ajustarAnchoTabla(table, colgroup);
+};
+
+/** La columna Nombres puede fijarse a la izquierda (como "inmovilizar" en Excel); la elección se recuerda. */
+const prepararColumnaNombres = (table) => {
+    const header = table.querySelectorAll('thead tr:last-child th')[FIELD_KEYS.indexOf('nombres')];
+    if (!header || header.dataset.fijable === 'true') return;
+
+    header.dataset.fijable = 'true';
+    header.classList.add('reclutamiento-col-nombres');
+
+    const boton = document.createElement('button');
+    boton.type = 'button';
+    boton.className = 'reclutamiento-pin-button';
+    boton.innerHTML = `
+        <svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 17v5" />
+            <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" />
+        </svg>
+    `;
+
+    const aplicar = (fijo) => {
+        table.classList.toggle('reclutamiento-frozen', fijo);
+        boton.setAttribute('aria-pressed', String(fijo));
+        boton.title = fijo ? 'Soltar la columna Nombres' : 'Fijar la columna Nombres al desplazarse';
+        boton.setAttribute('aria-label', boton.title);
+    };
+
+    boton.addEventListener('click', () => {
+        const fijo = !table.classList.contains('reclutamiento-frozen');
+        aplicar(fijo);
+        guardarPreferencia(NOMBRES_FIJO_KEY, fijo);
+    });
+
+    aplicar(leerPreferencia(NOMBRES_FIJO_KEY, false) === true);
+    header.insertBefore(boton, header.firstChild);
 };
 
 const scrollRowIntoGridView = (rowElement) => {
@@ -1336,10 +1423,16 @@ const renderTable = (rows, tbody, hiddenInput, table) => {
         tr.className = 'border-b border-slate-200 align-top';
         tr.dataset.candidatoId = row.id;
         tr.dataset.graduated = row.graduado ? 'true' : 'false';
+        marcarInteresadoApto(tr, row);
+
+        const numberCell = document.createElement('td');
+        numberCell.className = 'reclutamiento-row-number';
+        numberCell.textContent = rows.indexOf(row) + 1;
+        tr.appendChild(numberCell);
 
         FIELD_KEYS.forEach((key) => {
             const td = document.createElement('td');
-            td.className = 'border-r border-slate-200 align-top';
+            td.className = key === 'nombres' ? 'reclutamiento-col-nombres border-r border-slate-200 align-top' : 'border-r border-slate-200 align-top';
             const input = createCell(key, row[key] ?? '', row);
             bindInput(row, key, input, hiddenInput, rows);
             input.addEventListener('change', () => setupColumnResizing(table));

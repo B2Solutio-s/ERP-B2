@@ -34,6 +34,11 @@ class EmpleadoPeriodoContrato extends Model
         return $this->belongsTo(Empleado::class);
     }
 
+    public function documentoContrato()
+    {
+        return $this->hasOne(EmpleadoDocumentoContrato::class, 'periodo_id');
+    }
+
     public function documentosCese()
     {
         return $this->hasMany(EmpleadoDocumentoCese::class, 'periodo_id');
@@ -56,5 +61,22 @@ class EmpleadoPeriodoContrato extends Model
         }
 
         return 'activo';
+    }
+
+    /**
+     * Estado dentro del historial completo: un período que ya tiene otro posterior se considera "renovado"
+     * (aunque ya haya vencido), y solo el último puede estar activo / por vencer / vencido.
+     */
+    public function estadoEn(\Illuminate\Support\Collection $periodos): string
+    {
+        $propio = $this->estado();
+
+        if ($propio === 'cesado') {
+            return 'cesado';
+        }
+
+        $hayPosterior = $periodos->contains(fn ($otro) => $otro->id !== $this->id && $otro->fecha_inicio->gt($this->fecha_inicio));
+
+        return $hayPosterior ? 'renovado' : $propio;
     }
 }

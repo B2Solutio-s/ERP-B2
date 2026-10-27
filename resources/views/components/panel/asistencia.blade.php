@@ -14,7 +14,7 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function mount(): void
     {
-        abort_unless(Auth::user()->esGth() || Auth::user()->esAdmin(), 403);
+        abort_unless(Auth::user()->esAdmin(), 403);
 
         $this->fecha = now('America/Lima')->toDateString();
     }

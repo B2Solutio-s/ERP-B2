@@ -175,6 +175,62 @@
         border-bottom: 1px solid rgb(226 232 240);
     }
 
+    .reclutamiento-grid-scroll .reclutamiento-row-number,
+    .reclutamiento-grid-scroll .reclutamiento-row-number-head {
+        position: sticky;
+        left: 0;
+        z-index: 20;
+        background-color: rgb(241 245 249);
+        border-right: 1px solid rgb(203 213 225);
+    }
+
+    .reclutamiento-grid-scroll .reclutamiento-row-number {
+        @apply px-1 py-2 text-center text-xs font-medium text-slate-500 select-none;
+    }
+
+    .reclutamiento-grid-scroll .reclutamiento-row-number-head {
+        z-index: 40;
+    }
+
+    /* Nombres: siempre "sticky" (sin desplazamiento mientras no se fije) para poder fijarse sin cambiar de posición. */
+    .reclutamiento-grid-scroll .reclutamiento-col-nombres {
+        position: sticky;
+    }
+
+    .reclutamiento-grid-scroll table.reclutamiento-frozen .reclutamiento-col-nombres {
+        left: 52px;
+        z-index: 15;
+        background-color: rgb(255 255 255);
+        box-shadow: 2px 0 0 rgb(203 213 225);
+    }
+
+    .reclutamiento-grid-scroll table.reclutamiento-frozen thead .reclutamiento-col-nombres {
+        z-index: 35;
+        background-color: rgb(241 245 249);
+    }
+
+    .reclutamiento-pin-button {
+        @apply mr-1 inline-flex h-5 w-5 items-center justify-center rounded align-middle text-slate-400 transition hover:bg-slate-200 hover:text-slate-700;
+    }
+
+    .reclutamiento-pin-button[aria-pressed='true'] {
+        @apply bg-primary/10 text-primary;
+    }
+
+    /* Interesados aptos resaltados (el sticky necesita fondo propio para tapar lo que pasa por debajo). */
+    .reclutamiento-grid-scroll tr.reclutamiento-row-apto:not(.reclutamiento-row-graduated) > td,
+    .reclutamiento-grid-scroll table.reclutamiento-frozen tbody tr.reclutamiento-row-apto:not(.reclutamiento-row-graduated) > td.reclutamiento-col-nombres {
+        background-color: rgb(209 250 229);
+    }
+
+    .reclutamiento-grid-scroll table.reclutamiento-frozen tbody tr.reclutamiento-row-locked:not(.reclutamiento-row-apto) > td.reclutamiento-col-nombres {
+        background-color: rgb(255 251 235);
+    }
+
+    .reclutamiento-grid-scroll table.reclutamiento-frozen tbody tr.reclutamiento-row-graduated > td.reclutamiento-col-nombres {
+        background-color: rgb(240 249 255);
+    }
+
         .reclutamiento-grid-scroll tbody tr.reclutamiento-row-locked {
             @apply bg-amber-50;
             box-shadow: inset 4px 0 0 rgb(245 158 11);
@@ -312,6 +368,31 @@
 
     .wizard-sidebar-step-label-active {
         @apply font-semibold text-slate-900;
+    }
+
+    .recordatorio-popup {
+        animation: recordatorio-entrada 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+    }
+
+    .recordatorio-campana {
+        transform-origin: 50% 0;
+        animation: recordatorio-campana 1.6s ease-in-out infinite;
+    }
+
+    @keyframes recordatorio-entrada {
+        from { opacity: 0; transform: translateX(2rem) scale(0.95); }
+        to { opacity: 1; transform: none; }
+    }
+
+    @keyframes recordatorio-campana {
+        0%, 60%, 100% { transform: rotate(0); }
+        10%, 30% { transform: rotate(14deg); }
+        20%, 40% { transform: rotate(-14deg); }
+        50% { transform: rotate(6deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .recordatorio-popup, .recordatorio-campana { animation: none; }
     }
 
     .reclutamiento-tabs {

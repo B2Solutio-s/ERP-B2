@@ -2,6 +2,7 @@
 
 use App\Models\CandidatoDocumento;
 use App\Models\EmpleadoDocumentoCese;
+use App\Models\EmpleadoDocumentoContrato;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -37,7 +38,7 @@ Route::livewire('/panel/usuarios', 'panel.usuarios')->name('usuarios')->middlewa
 Route::livewire('/panel/registro-ingresos', 'panel.registro-ingresos')->name('registro-ingresos')->middleware('auth');
 
 Route::get('/panel/registro-ingresos/documentos/{documento}', function (CandidatoDocumento $documento) {
-    abort_unless(Auth::user()->esAdmin(), 403);
+    abort_unless(Auth::user()->esAdmin() || Auth::user()->esGth(), 403);
 
     return Storage::disk('local')->response($documento->ruta, $documento->nombre_original);
 })->name('registro-ingresos.documento')->middleware('auth');
@@ -47,3 +48,9 @@ Route::get('/panel/registro-ingresos/documentos-cese/{documento}', function (Emp
 
     return Storage::disk('local')->response($documento->ruta, $documento->nombre_original);
 })->name('registro-ingresos.documento-cese')->middleware('auth');
+
+Route::get('/panel/registro-ingresos/contratos-firmados/{documento}', function (EmpleadoDocumentoContrato $documento) {
+    abort_unless(Auth::user()->esAdmin(), 403);
+
+    return Storage::disk('local')->response($documento->ruta, $documento->nombre_original);
+})->name('registro-ingresos.documento-contrato')->middleware('auth');

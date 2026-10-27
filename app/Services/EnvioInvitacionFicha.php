@@ -25,7 +25,7 @@ class EnvioInvitacionFicha
             return 'sin correo';
         }
 
-        $invitacion = OnboardingInvitation::where('reclutamiento_candidato_id', $candidato->id)->with('empleado')->latest()->first();
+        $invitacion = OnboardingInvitation::principalDe($candidato->id);
 
         if ($invitacion?->empleado || $invitacion?->usado_en) {
             return 'ya llenó su ficha';

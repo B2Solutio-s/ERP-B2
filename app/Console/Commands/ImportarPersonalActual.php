@@ -4,11 +4,11 @@ namespace App\Console\Commands;
 
 use App\Models\Area;
 use App\Models\CandidatoReclutamiento;
+use App\Services\LectorXlsx;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use RuntimeException;
-use ZipArchive;
 
 class ImportarPersonalActual extends Command
 {
@@ -20,7 +20,7 @@ class ImportarPersonalActual extends Command
 
     public function handle(): int
     {
-        $filas = $this->leerExcel($this->argument('archivo'));
+        $filas = LectorXlsx::leer($this->argument('archivo'));
         $cabecera = array_shift($filas);
         $indice = array_flip(array_map(fn ($c) => $this->clave($c), $cabecera));
 
@@ -145,58 +145,5 @@ class ImportarPersonalActual extends Command
     private function igual(string $a, string $b): bool
     {
         return $this->clave($a) === $this->clave($b);
-    }
-
-    /** Lee la primera hoja de un .xlsx sin dependencias externas. */
-    private function leerExcel(string $ruta): array
-    {
-        $zip = new ZipArchive;
-        if ($zip->open($ruta) !== true) {
-            throw new RuntimeException("No se pudo abrir {$ruta}");
-        }
-
-        $compartidas = [];
-        if ($xml = $zip->getFromName('xl/sharedStrings.xml')) {
-            foreach (simplexml_load_string($xml)->si as $si) {
-                $compartidas[] = (string) (isset($si->t) ? $si->t : implode('', array_map(fn ($r) => (string) $r->t, iterator_to_array($si->r, false))));
-            }
-        }
-
-        $hoja = simplexml_load_string($zip->getFromName('xl/worksheets/sheet1.xml') ?: $zip->getFromName($this->primeraHoja($zip)));
-        $filas = [];
-
-        foreach ($hoja->sheetData->row as $row) {
-            $celdas = [];
-            foreach ($row->c as $c) {
-                preg_match('/^[A-Z]+/', (string) $c['r'], $m);
-                $col = 0;
-                foreach (str_split($m[0]) as $letra) {
-                    $col = $col * 26 + ord($letra) - 64;
-                }
-                $valor = isset($c->v) ? (string) $c->v : (isset($c->is) ? (string) $c->is->t : '');
-                $celdas[$col - 1] = ((string) $c['t']) === 's' ? ($compartidas[(int) $valor] ?? '') : $valor;
-            }
-            if ($celdas) {
-                $fila = array_fill(0, max(array_keys($celdas)) + 1, '');
-                foreach ($celdas as $i => $v) {
-                    $fila[$i] = $v;
-                }
-                $filas[] = $fila;
-            }
-        }
-
-        return $filas;
-    }
-
-    private function primeraHoja(ZipArchive $zip): string
-    {
-        for ($i = 0; $i < $zip->numFiles; $i++) {
-            $nombre = $zip->getNameIndex($i);
-            if (preg_match('#^xl/worksheets/sheet\d+\.xml$#', $nombre)) {
-                return $nombre;
-            }
-        }
-
-        throw new RuntimeException('El Excel no tiene hojas.');
     }
 }

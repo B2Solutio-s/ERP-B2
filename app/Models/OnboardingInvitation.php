@@ -19,6 +19,8 @@ class OnboardingInvitation extends Model
         'correo_encolado_at',
         'correo_enviado_at',
         'correo_error',
+        'borrador',
+        'borrador_at',
     ];
 
     protected function casts(): array
@@ -28,6 +30,8 @@ class OnboardingInvitation extends Model
             'usado_en' => 'datetime',
             'correo_encolado_at' => 'datetime',
             'correo_enviado_at' => 'datetime',
+            'borrador' => 'encrypted:array',
+            'borrador_at' => 'datetime',
         ];
     }
 
@@ -39,6 +43,19 @@ class OnboardingInvitation extends Model
             'email_candidato' => $emailCandidato,
             'expira_en' => now()->addDays($diasValidez),
         ]);
+    }
+
+    /**
+     * Invitación que representa al candidato: la que ya se usó (aunque después se haya generado otra
+     * porque la primera venció) y, si ninguna se usó, la más reciente.
+     */
+    public static function principalDe(int $candidatoId): ?self
+    {
+        return self::where('reclutamiento_candidato_id', $candidatoId)
+            ->with('empleado')
+            ->orderByRaw('usado_en is null')
+            ->latest('id')
+            ->first();
     }
 
     /** Link que recibe el trabajador: con la dirección pública si está configurada. */
