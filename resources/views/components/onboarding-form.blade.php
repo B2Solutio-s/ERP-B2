@@ -47,6 +47,7 @@ new class extends Component
     public string $lugar_nacimiento = '';
     public string $edad = '';
     public string $numero_hijos = '';
+    public string $hijos_menores = '';
     public string $estado_civil = '';
     public string $sexo = '';
     public string $direccion = '';
@@ -95,7 +96,7 @@ new class extends Component
     /** Campos de texto cuyo avance se guarda (no incluye los que vienen del candidato ni la firma dibujada). */
     private const BORRADOR_TEXTO = [
         'documento_identidad', 'apellido_paterno', 'apellido_materno', 'nombres', 'fecha_nacimiento', 'lugar_nacimiento',
-        'edad', 'numero_hijos', 'estado_civil', 'sexo', 'direccion', 'vivienda_tipo', 'vivienda_tenencia', 'distrito',
+        'edad', 'numero_hijos', 'hijos_menores', 'estado_civil', 'sexo', 'direccion', 'vivienda_tipo', 'vivienda_tenencia', 'distrito',
         'provincia', 'departamento_residencia', 'celular_llamadas', 'celular_whatsapp', 'email',
         'contacto_emergencia_nombre', 'contacto_emergencia_parentesco', 'contacto_emergencia_telefono',
         'pension_afiliado', 'pension_sistema', 'pension_afp', 'pension_cuspp',
@@ -228,7 +229,7 @@ new class extends Component
     }
 
     private const CAMPOS_SIN_MAYUSCULA = [
-        'email', 'estado_civil', 'sexo', 'pension_afiliado', 'pension_sistema', 'pension_afp',
+        'email', 'estado_civil', 'sexo', 'hijos_menores', 'pension_afiliado', 'pension_sistema', 'pension_afp',
         'vivienda_tipo', 'vivienda_tenencia', 'salud_antecedentes', 'salud_enfermedad_actual',
         'declaracion_datos_veraces', 'declaracion_autoriza_verificacion', 'declaracion_capacitacion_condiciones',
         'firma_imagen',
@@ -513,6 +514,7 @@ new class extends Component
                 'lugar_nacimiento' => 'required|string|max:150',
                 'edad' => 'required|integer|min:0|max:120',
                 'numero_hijos' => 'required|integer|min:0|max:20',
+                'hijos_menores' => 'required|in:si,no',
                 'estado_civil' => 'required|in:soltero,casado,conviviente,divorciado,viudo',
                 'sexo' => 'required|in:F,M',
                 'direccion' => 'required|string|max:255',
@@ -795,6 +797,7 @@ new class extends Component
                 'lugar_nacimiento' => $this->lugar_nacimiento ?: null,
                 'edad' => $this->edad !== '' ? (int) $this->edad : null,
                 'numero_hijos' => $this->numero_hijos !== '' ? (int) $this->numero_hijos : null,
+                'hijos_menores' => $this->hijos_menores === '' ? null : $this->hijos_menores === 'si',
                 'estado_civil' => $this->estado_civil ?: null,
                 'sexo' => $this->sexo ?: null,
                 'direccion' => $this->direccion,
@@ -924,6 +927,7 @@ new class extends Component
                             <x-forms.field label="Lugar de nacimiento" name="lugar_nacimiento" />
                             <x-forms.field label="Edad" name="edad" type="number" min="0" max="120" />
                             <x-forms.field label="Nº de hijos" name="numero_hijos" type="number" min="0" max="20" />
+                            <x-forms.choice label="¿Tienes hijos menores de edad?" name="hijos_menores" :options="['si' => 'Sí', 'no' => 'No']" span />
                             <x-forms.choice label="Estado civil" name="estado_civil" :options="[
                                 'soltero' => 'Soltero(a)',
                                 'casado' => 'Casado(a)',

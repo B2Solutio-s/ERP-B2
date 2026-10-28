@@ -55,7 +55,7 @@
             <span class="ficha-cell-value">{{ $empleado->nombres }}</span>
         </div>
     </div>
-    <div class="ficha-grid grid-cols-6">
+    <div class="ficha-grid grid-cols-7">
         <div class="ficha-cell">
             <span class="ficha-cell-label">Fecha nac.</span>
             <span class="ficha-cell-value">{{ $fecha($empleado->fecha_nacimiento) ?: '-' }}</span>
@@ -71,6 +71,10 @@
         <div class="ficha-cell">
             <span class="ficha-cell-label">Nº hijos</span>
             <span class="ficha-cell-value">{{ $empleado->numero_hijos ?? '-' }}</span>
+        </div>
+        <div class="ficha-cell">
+            <span class="ficha-cell-label">Hijos menores de edad</span>
+            <span class="ficha-cell-value">{{ is_null($empleado->hijos_menores) ? '-' : ($empleado->hijos_menores ? 'Sí' : 'No') }}</span>
         </div>
         <div class="ficha-cell">
             <span class="ficha-cell-label">Estado civil</span>

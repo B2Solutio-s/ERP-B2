@@ -75,8 +75,9 @@
             </td>
         </tr>
         <tr>
-            <td colspan="2"><span class="label">Estado civil</span><span class="value" style="text-transform:capitalize">{{ $empleado->estado_civil ?: '-' }}</span></td>
-            <td colspan="2"><span class="label">Sexo</span><span class="value">F ( {{ $chkVal($empleado->sexo, 'F') }} )&nbsp;&nbsp;M ( {{ $chkVal($empleado->sexo, 'M') }} )</span></td>
+            <td><span class="label">Estado civil</span><span class="value" style="text-transform:capitalize">{{ $empleado->estado_civil ?: '-' }}</span></td>
+            <td><span class="label">Sexo</span><span class="value">F ( {{ $chkVal($empleado->sexo, 'F') }} )&nbsp;&nbsp;M ( {{ $chkVal($empleado->sexo, 'M') }} )</span></td>
+            <td colspan="2"><span class="label">¿Hijos menores de edad?</span><span class="value">{{ is_null($empleado->hijos_menores) ? '-' : ($empleado->hijos_menores ? 'Sí' : 'No') }}</span></td>
         </tr>
         <tr>
             <td colspan="2"><span class="label">Dirección actual</span><span class="value">{{ $empleado->direccion ?: '-' }}</span></td>

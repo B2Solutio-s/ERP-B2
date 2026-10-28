@@ -44,6 +44,7 @@ class CandidatoReclutamiento extends Model
         'email_corporativo',
         'cuenta_sueldo',
         'cuenta_free',
+        'cuenta_cts',
         'cci',
         'experiencia',
         'observaciones',

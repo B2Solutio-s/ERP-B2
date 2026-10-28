@@ -212,6 +212,7 @@ return [
         'lugar_nacimiento' => 'lugar de nacimiento',
         'edad' => 'edad',
         'numero_hijos' => 'número de hijos',
+        'hijos_menores' => 'hijos menores de edad',
         'estado_civil' => 'estado civil',
         'sexo' => 'sexo',
         'direccion' => 'dirección actual',

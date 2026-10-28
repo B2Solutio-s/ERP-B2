@@ -90,6 +90,8 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $cuentaFreeEdit = '';
 
+    public string $cuentaCtsEdit = '';
+
     public string $cciEdit = '';
 
     public string $bancoGuardado = '';
@@ -676,20 +678,23 @@ new #[Layout('layouts.panel')] class extends Component
         $this->bancoGuardado = '';
         $this->cuentaSueldoEdit = trim($this->cuentaSueldoEdit);
         $this->cuentaFreeEdit = trim($this->cuentaFreeEdit);
+        $this->cuentaCtsEdit = trim($this->cuentaCtsEdit);
         $this->cciEdit = preg_replace('/[\s-]+/', '', $this->cciEdit);
 
         $this->validate([
             'cuentaSueldoEdit' => ['nullable', 'regex:/^[0-9][0-9\s-]*$/', 'max:30'],
             'cuentaFreeEdit' => ['nullable', 'regex:/^[0-9][0-9\s-]*$/', 'max:30'],
+            'cuentaCtsEdit' => ['nullable', 'regex:/^[0-9][0-9\s-]*$/', 'max:30'],
             'cciEdit' => ['nullable', 'digits:20'],
         ], [
             'regex' => 'Solo se permiten números, espacios y guiones.',
             'digits' => 'El CCI debe tener 20 dígitos.',
-        ], ['cuentaSueldoEdit' => 'cuenta sueldo', 'cuentaFreeEdit' => 'cuenta free', 'cciEdit' => 'CCI']);
+        ], ['cuentaSueldoEdit' => 'cuenta sueldo', 'cuentaFreeEdit' => 'cuenta free', 'cuentaCtsEdit' => 'cuenta CTS', 'cciEdit' => 'CCI']);
 
         $candidato->update([
             'cuenta_sueldo' => $this->cuentaSueldoEdit ?: null,
             'cuenta_free' => $this->cuentaFreeEdit ?: null,
+            'cuenta_cts' => $this->cuentaCtsEdit ?: null,
             'cci' => $this->cciEdit ?: null,
         ]);
 
@@ -792,6 +797,7 @@ new #[Layout('layouts.panel')] class extends Component
         $this->correoCorpGuardado = '';
         $this->cuentaSueldoEdit = (string) $candidato?->cuenta_sueldo;
         $this->cuentaFreeEdit = (string) $candidato?->cuenta_free;
+        $this->cuentaCtsEdit = (string) $candidato?->cuenta_cts;
         $this->cciEdit = (string) $candidato?->cci;
         $this->bancoGuardado = '';
     }
@@ -808,6 +814,7 @@ new #[Layout('layouts.panel')] class extends Component
         $this->correoCorpGuardado = '';
         $this->cuentaSueldoEdit = '';
         $this->cuentaFreeEdit = '';
+        $this->cuentaCtsEdit = '';
         $this->cciEdit = '';
         $this->bancoGuardado = '';
     }
@@ -1423,6 +1430,7 @@ new #[Layout('layouts.panel')] class extends Component
             'Lugar de nacimiento' => $empleado->lugar_nacimiento,
             'Edad' => $empleado->edad,
             'N° hijos' => $empleado->numero_hijos,
+            '¿Hijos menores de edad?' => $siNo($empleado->hijos_menores),
             'Estado civil' => $empleado->estado_civil ? ucfirst($empleado->estado_civil) : null,
             'Sexo' => match ($empleado->sexo) { 'F' => 'Femenino', 'M' => 'Masculino', default => null },
             'Dirección' => $empleado->direccion,
