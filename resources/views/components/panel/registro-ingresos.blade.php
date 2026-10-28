@@ -29,6 +29,22 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $mensajeEnvio = '';
 
+    public const FILTROS = ['nombre' => 'Nombre', 'dni' => 'DNI / C.E', 'ingreso' => 'Fecha de ingreso'];
+
+    /** Filtros añadidos como chips, en el orden en que se añadieron. */
+    public array $filtrosActivos = [];
+
+    /** Chip con el selector abierto ('' = ninguno, 'agregar' = menú "+ Añadir filtro"). */
+    public string $filtroAbierto = '';
+
+    public string $filtroNombre = '';
+
+    public string $filtroDni = '';
+
+    public string $filtroIngresoDesde = '';
+
+    public string $filtroIngresoHasta = '';
+
     public ?int $empleadoModalId = null;
 
     public ?int $datosModalId = null;
@@ -539,9 +555,99 @@ new #[Layout('layouts.panel')] class extends Component
                     : trim("{$candidato->apellidos} {$candidato->nombres}");
 
                 $candidato->setAttribute('nombre_mostrado', preg_replace('/\s+/u', ' ', $nombre));
+                $candidato->setAttribute('fecha_ingreso_contrato', $this->inicioPrimerContrato($candidato, $empleado));
+                $candidato->setAttribute('dni_mostrado', trim((string) ($empleado?->documento_identidad ?: $candidato->dni_ce)));
             })
+            ->filter(fn ($candidato) => $this->cumpleFiltros($candidato))
             ->sortBy(fn ($candidato) => Str::ascii(mb_strtoupper($candidato->nombre_mostrado)))
             ->values();
+    }
+
+    public function hayFiltros(): bool
+    {
+        return trim($this->filtroNombre.$this->filtroDni.$this->filtroIngresoDesde.$this->filtroIngresoHasta) !== '';
+    }
+
+    public function alternarFiltro(string $filtro): void
+    {
+        $this->filtroAbierto = $this->filtroAbierto === $filtro ? '' : $filtro;
+    }
+
+    public function cerrarFiltro(): void
+    {
+        $this->filtroAbierto = '';
+    }
+
+    public function agregarFiltro(string $filtro): void
+    {
+        if (! array_key_exists($filtro, self::FILTROS) || in_array($filtro, $this->filtrosActivos, true)) {
+            return;
+        }
+
+        $this->filtrosActivos[] = $filtro;
+        $this->filtroAbierto = $filtro;
+    }
+
+    public function quitarFiltro(string $filtro): void
+    {
+        $this->filtrosActivos = array_values(array_diff($this->filtrosActivos, [$filtro]));
+        $this->filtroAbierto = '';
+
+        match ($filtro) {
+            'nombre' => $this->reset('filtroNombre'),
+            'dni' => $this->reset('filtroDni'),
+            'ingreso' => $this->reset('filtroIngresoDesde', 'filtroIngresoHasta'),
+            default => null,
+        };
+    }
+
+    /** Cuántos criterios tiene el filtro (para el globo del chip). */
+    public function criteriosDeFiltro(string $filtro): int
+    {
+        return match ($filtro) {
+            'nombre' => (int) (trim($this->filtroNombre) !== ''),
+            'dni' => (int) (trim($this->filtroDni) !== ''),
+            'ingreso' => (int) ($this->filtroIngresoDesde !== '' || $this->filtroIngresoHasta !== ''),
+            default => 0,
+        };
+    }
+
+    /** Nombre: todas las palabras escritas, sin importar tildes ni mayúsculas; DNI: contiene lo escrito; ingreso: dentro del rango. */
+    protected function cumpleFiltros(CandidatoReclutamiento $candidato): bool
+    {
+        $normalizar = fn (string $texto) => Str::ascii(mb_strtolower($texto));
+
+        foreach (array_filter(preg_split('/\s+/u', $normalizar(trim($this->filtroNombre)))) as $palabra) {
+            if (! str_contains($normalizar($candidato->nombre_mostrado), $palabra)) {
+                return false;
+            }
+        }
+
+        $dni = preg_replace('/\s+/', '', $this->filtroDni);
+        if ($dni !== '' && ! str_contains(mb_strtolower($candidato->dni_mostrado), mb_strtolower($dni))) {
+            return false;
+        }
+
+        if ($this->filtroIngresoDesde !== '' || $this->filtroIngresoHasta !== '') {
+            $ingreso = $candidato->fecha_ingreso_contrato?->toDateString();
+            if (! $ingreso
+                || ($this->filtroIngresoDesde !== '' && $ingreso < $this->filtroIngresoDesde)
+                || ($this->filtroIngresoHasta !== '' && $ingreso > $this->filtroIngresoHasta)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** Fecha de ingreso = inicio del primer contrato; mientras no hay ficha, el de los contratos cargados en espera. */
+    protected function inicioPrimerContrato(CandidatoReclutamiento $candidato, ?Empleado $empleado): ?Carbon
+    {
+        $fecha = $empleado
+            ? $empleado->periodosContrato()->min('fecha_inicio')
+            : collect($candidato->periodos_iniciales ?? [])->pluck('fecha_inicio')->filter()->min();
+
+        return $fecha ? Carbon::parse($fecha) : null;
     }
 
     public function invitacionDe(CandidatoReclutamiento $candidato): ?OnboardingInvitation
@@ -1436,6 +1542,62 @@ new #[Layout('layouts.panel')] class extends Component
         <p class="text-sm text-slate-600">{{ $mensajeEnvio }}</p>
     @endif
 
+    <div class="reclutamiento-filter-bar">
+        @if ($filtroAbierto !== '')
+            <button type="button" wire:click="cerrarFiltro" class="fixed inset-0 z-30 cursor-default" aria-label="Cerrar filtro" tabindex="-1"></button>
+        @endif
+
+        @foreach ($filtrosActivos as $filtro)
+            @php($criterios = $this->criteriosDeFiltro($filtro))
+            <div class="reclutamiento-filter-chip" wire:key="chip-{{ $filtro }}">
+                <button type="button" wire:click="alternarFiltro('{{ $filtro }}')" class="reclutamiento-filter-chip-button{{ $criterios ? ' is-active' : '' }}{{ $filtroAbierto === $filtro ? ' is-open' : '' }}">
+                    <svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h12M9 12h6M11 18h2" /></svg>
+                    <span>{{ self::FILTROS[$filtro] }}</span>
+                    @if ($criterios)
+                        <span class="reclutamiento-filter-chip-count">1</span>
+                    @endif
+                </button>
+                <button type="button" wire:click="quitarFiltro('{{ $filtro }}')" class="reclutamiento-filter-chip-remove" aria-label="Quitar filtro" title="Quitar filtro">
+                    <svg aria-hidden="true" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12" /><path d="M18 6L6 18" /></svg>
+                </button>
+
+                @if ($filtroAbierto === $filtro)
+                    <div class="reclutamiento-filter-popover">
+                        @if ($filtro === 'nombre')
+                            <input type="text" wire:model.live.debounce.300ms="filtroNombre" wire:key="in-nombre" class="reclutamiento-filter-popover-search !mb-0" placeholder="Apellidos o nombres..." autofocus>
+                        @elseif ($filtro === 'dni')
+                            <input type="text" inputmode="numeric" wire:model.live.debounce.300ms="filtroDni" wire:key="in-dni" class="reclutamiento-filter-popover-search !mb-0" placeholder="Número de documento..." autofocus>
+                        @else
+                            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Desde</label>
+                            <input type="date" wire:model.live="filtroIngresoDesde" wire:key="in-desde" class="reclutamiento-filter-popover-search">
+                            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hasta</label>
+                            <input type="date" wire:model.live="filtroIngresoHasta" wire:key="in-hasta" class="reclutamiento-filter-popover-search !mb-0">
+                        @endif
+                    </div>
+                @endif
+            </div>
+        @endforeach
+
+        @if (count($filtrosActivos) < count(self::FILTROS))
+            <div class="reclutamiento-filter-chip">
+                <button type="button" wire:click="alternarFiltro('agregar')" class="reclutamiento-filter-chip-button{{ $filtroAbierto === 'agregar' ? ' is-open' : '' }}">
+                    <span>+ Añadir filtro</span>
+                </button>
+                @if ($filtroAbierto === 'agregar')
+                    <div class="reclutamiento-filter-popover">
+                        <div class="reclutamiento-filter-popover-list">
+                            @foreach (self::FILTROS as $clave => $etiqueta)
+                                @unless (in_array($clave, $filtrosActivos, true))
+                                    <button type="button" wire:click="agregarFiltro('{{ $clave }}')" class="reclutamiento-filter-popover-option w-full text-left">{{ $etiqueta }}</button>
+                                @endunless
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
+            </div>
+        @endif
+    </div>
+
     <div class="card-panel !p-0 overflow-x-auto" @if ($this->hayEnviosEnCola()) wire:poll.5s @endif>
         <table class="data-table w-full">
             <thead>
@@ -1446,6 +1608,7 @@ new #[Layout('layouts.panel')] class extends Component
                     <th>Campaña</th>
                     <th>Agente reclutador</th>
                     <th>Fecha APTO</th>
+                    <th>Fecha de ingreso</th>
                     <th>Invitación</th>
                     <th>Formulario</th>
                 </tr>
@@ -1473,11 +1636,12 @@ new #[Layout('layouts.panel')] class extends Component
                                 </button>
                             </div>
                         </td>
-                        <td>{{ $invitacion?->empleado?->documento_identidad ?: $candidato->dni_ce ?: '-' }}</td>
+                        <td>{{ $candidato->dni_mostrado ?: '-' }}</td>
                         <td>{{ $candidato->puesto ?: '-' }}</td>
                         <td>{{ $candidato->campana ?: '-' }}</td>
                         <td>{{ $candidato->agente_reclutador ?: '-' }}</td>
                         <td>{{ $candidato->fecha_apto?->format('d/m/Y') ?? '-' }}</td>
+                        <td>{{ $candidato->fecha_ingreso_contrato?->format('d/m/Y') ?? '-' }}</td>
                         <td>
                             <div class="space-y-1.5">
                             @if ($invitacion && $invitacion->estaVigente())
@@ -1531,8 +1695,8 @@ new #[Layout('layouts.panel')] class extends Component
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="8" class="px-4 py-8 text-center text-sm text-slate-400">
-                            Todavía no hay candidatos marcados como aptos en Proceso de capacitación.
+                        <td colspan="9" class="px-4 py-8 text-center text-sm text-slate-400">
+                            {{ $this->hayFiltros() ? 'Ningún registro coincide con los filtros.' : 'Todavía no hay candidatos marcados como aptos en Proceso de capacitación.' }}
                         </td>
                     </tr>
                 @endforelse
