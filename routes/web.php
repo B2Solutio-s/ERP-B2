@@ -37,8 +37,6 @@ Route::livewire('/panel/gestion-candidatos', 'panel.gestion-candidatos')->name('
 
 Route::livewire('/panel/proceso-reclutamiento','panel.proceso-reclutamiento')->name('proceso-reclutamiento')->middleware('auth');
 
-Route::livewire('/panel/gestion-candidatos-demo', 'panel.gestion-candidatos-demo')->name('gestion-candidatos-demo')->middleware('auth');
-
 Route::livewire('/panel/catalogos', 'panel.catalogos')->name('catalogos')->middleware('auth');
 
 Route::livewire('/panel/asistencia', 'panel.asistencia')->name('asistencia')->middleware('auth');
