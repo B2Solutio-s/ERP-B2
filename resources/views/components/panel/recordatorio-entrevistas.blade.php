@@ -21,7 +21,7 @@ new class extends Component
      * Entrevistas de hoy (programadas o reprogramadas) que aún no tienen resultado y cuya hora no ha pasado.
      * La reprogramación no tiene hora propia: se usa la hora de la entrevista.
      *
-     * @return array<int, array{id: int, hora: ?string, nombre: string, celular: ?string, reprogramada: bool}>
+     * @return array<int, array{id: int, hora: ?string, nombre: string, puesto: ?string, celular: ?string, reprogramada: bool}>
      */
     public function entrevistas(): array
     {
@@ -50,6 +50,7 @@ new class extends Component
                     'id' => $c->id,
                     'hora' => $hora,
                     'nombre' => $c->nombreCompleto() ?: 'Sin nombre',
+                    'puesto' => $c->puesto,
                     'celular' => $c->numero_celular,
                     'reprogramada' => $c->asistio_entrevista === 'REPROGRAMADO' && $c->fecha_reprogramada?->toDateString() === $hoy,
                     'vigente' => $hora ? Carbon::parse("{$hoy} {$hora}", self::ZONA)->gte($ahora) : $ahora->hour < 12,
@@ -85,7 +86,7 @@ new class extends Component
 <div wire:poll.60s>
     @php($entrevistasHoy = $this->visibles())
     @if ($entrevistasHoy)
-        <div class="recordatorio-popup fixed right-4 top-16 z-[60] w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-white shadow-2xl ring-2 ring-amber-400" role="alert" aria-live="polite">
+        <div class="recordatorio-popup fixed right-4 top-16 z-[60] w-[26rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-white shadow-2xl ring-2 ring-amber-400" role="alert" aria-live="polite">
             <div class="flex items-center gap-3 bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-3 text-white">
                 <svg class="recordatorio-campana h-6 w-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
@@ -107,6 +108,9 @@ new class extends Component
                                 <p class="truncate text-[11px] text-slate-400">{{ $entrevista['celular'] }}</p>
                             @endif
                         </div>
+                        @if ($entrevista['puesto'])
+                            <span class="max-w-[8.5rem] shrink-0 truncate rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700" title="{{ $entrevista['puesto'] }}">{{ $entrevista['puesto'] }}</span>
+                        @endif
                         @if ($entrevista['reprogramada'])
                             <span class="shrink-0 rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-700">Reprog.</span>
                         @endif

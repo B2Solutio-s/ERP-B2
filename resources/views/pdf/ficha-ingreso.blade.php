@@ -152,13 +152,15 @@
     @forelse ($empleado->empleosAnteriores as $empleo)
         <table class="data">
             <tr>
-                <th>Empresa</th><th>Cargo</th><th>Principal función</th><th>Sueldo</th><th>Fec. inicio - térm.</th><th>Motivo de cese</th>
+                <th>Empresa</th><th>Cargo</th><th>Principal función</th>@if (auth()->user()?->esAdmin())<th>Sueldo</th>@endif<th>Fec. inicio - térm.</th><th>Motivo de cese</th>
             </tr>
             <tr>
                 <td>{{ $empleo->empresa ?: '-' }}</td>
                 <td>{{ $empleo->cargo ?: '-' }}</td>
                 <td>{{ $empleo->funcion_principal ?: '-' }}</td>
-                <td>{{ $empleo->sueldo ?: '-' }}</td>
+                @if (auth()->user()?->esAdmin())
+                    <td>{{ $empleo->sueldo ?: '-' }}</td>
+                @endif
                 <td>{{ $fecha($empleo->fecha_inicio) ?: '-' }} - {{ $fecha($empleo->fecha_termino) ?: '-' }}</td>
                 <td>{{ $empleo->motivo_cese ?: '-' }}</td>
             </tr>

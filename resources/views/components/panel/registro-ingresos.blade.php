@@ -18,18 +18,30 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 use Livewire\WithFileUploads;
 use PhpOffice\PhpWord\TemplateProcessor;
 
-new #[Layout('layouts.panel')] class extends Component
+new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extends Component
 {
     use WithFileUploads;
 
     public string $mensajeEnvio = '';
 
-    public const FILTROS = ['nombre' => 'Nombre', 'dni' => 'DNI / C.E', 'ingreso' => 'Fecha de ingreso'];
+    public const FILTROS = ['nombre' => 'Nombre', 'dni' => 'DNI / C.E', 'ingreso' => 'Fecha de ingreso', 'situacion' => 'Situación', 'cumple' => 'Mes de cumpleaños'];
+
+    public const MESES = [1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril', 5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto', 9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre'];
+
+    /** Opciones del filtro de situación (clave => etiqueta). Solo lo usa el administrador. */
+    public const SITUACIONES = [
+        'activos' => 'Activos (incluye por vencer)',
+        'por_vencer' => 'Por vencer',
+        'vencido' => 'Vencidos',
+        'cesado' => 'Cesados',
+        'sin_contrato' => 'Sin ficha o sin contrato',
+    ];
 
     /** Filtros añadidos como chips, en el orden en que se añadieron. */
     public array $filtrosActivos = [];
@@ -44,6 +56,11 @@ new #[Layout('layouts.panel')] class extends Component
     public string $filtroIngresoDesde = '';
 
     public string $filtroIngresoHasta = '';
+
+    public string $filtroSituacion = '';
+
+    /** Mes (1-12) del cumpleaños; solo lo usa GTH. */
+    public string $filtroMesCumple = '';
 
     public ?int $empleadoModalId = null;
 
@@ -95,6 +112,17 @@ new #[Layout('layouts.panel')] class extends Component
     public string $cciEdit = '';
 
     public string $bancoGuardado = '';
+
+    /** Área / puesto / campaña / cargo del candidato (catálogo), editables desde el modal de Datos. */
+    public string $puestoAreaEdit = '';
+
+    public string $puestoEdit = '';
+
+    public string $campanaEdit = '';
+
+    public string $cargoEdit = '';
+
+    public string $puestoGuardado = '';
 
     public string $contratoArea = '';
 
@@ -559,15 +587,70 @@ new #[Layout('layouts.panel')] class extends Component
                 $candidato->setAttribute('nombre_mostrado', preg_replace('/\s+/u', ' ', $nombre));
                 $candidato->setAttribute('fecha_ingreso_contrato', $this->inicioPrimerContrato($candidato, $empleado));
                 $candidato->setAttribute('dni_mostrado', trim((string) ($empleado?->documento_identidad ?: $candidato->dni_ce)));
+                $candidato->setAttribute('situacion_contrato', $this->situacionContrato($empleado));
+                // El cumpleaños (ficha del trabajador; si no, el del candidato) solo se muestra a GTH.
+                $candidato->setAttribute('cumpleanos', Auth::user()->esGth() ? ($empleado?->fecha_nacimiento ?? $candidato->fecha_nacimiento) : null);
             })
             ->filter(fn ($candidato) => $this->cumpleFiltros($candidato))
             ->sortBy(fn ($candidato) => Str::ascii(mb_strtoupper($candidato->nombre_mostrado)))
             ->values();
     }
 
+    /**
+     * Situación del trabajador según su último período de contrato: [etiqueta, clase de la insignia, detalle, clave].
+     * Solo el administrador la ve en pantalla (los ceses son información de administración); GTH la usa para listar solo a los activos.
+     *
+     * @return array{0: string, 1: string, 2: ?string, 3: string}
+     */
+    protected function situacionContrato(?Empleado $empleado): array
+    {
+        if (! $empleado) {
+            return ['Sin ficha', 'badge-slate', 'Todavía no completa su ficha de datos', 'sin_ficha'];
+        }
+
+        $ultimo = $empleado->periodosContrato()->first();
+
+        if (! $ultimo) {
+            return ['Sin contrato', 'badge-slate', 'Aún no tiene un contrato registrado', 'sin_contrato'];
+        }
+
+        $motivo = ['renuncia' => 'Renuncia', 'despido' => 'Despido', 'vencimiento' => 'Vencimiento'][$ultimo->cese_tipo] ?? (string) $ultimo->cese_tipo;
+
+        return match ($ultimo->estado()) {
+            'activo' => ['Activo', 'badge-green', 'Contrato vigente hasta el '.$ultimo->fecha_fin->format('d/m/Y'), 'activo'],
+            'por_vencer' => ['Activo · por vencer', 'badge-amber', 'El contrato vence el '.$ultimo->fecha_fin->format('d/m/Y'), 'por_vencer'],
+            'vencido' => ['Vencido', 'badge-amber', 'El contrato venció el '.$ultimo->fecha_fin->format('d/m/Y').' y no se renovó', 'vencido'],
+            default => ['Cesado', 'badge-rose', trim($motivo.' · '.($ultimo->cese_fecha?->format('d/m/Y') ?? 'sin fecha'), ' ·'), 'cesado'],
+        };
+    }
+
+    /** Filtros que puede usar la persona conectada: situación (activos / cesados) es del administrador y mes de cumpleaños, de GTH. */
+    public function filtrosDisponibles(): array
+    {
+        return array_diff_key(self::FILTROS, Auth::user()->esGth() ? ['situacion' => true] : ['cumple' => true]);
+    }
+
     public function hayFiltros(): bool
     {
-        return trim($this->filtroNombre.$this->filtroDni.$this->filtroIngresoDesde.$this->filtroIngresoHasta) !== '';
+        return trim($this->filtroNombre.$this->filtroDni.$this->filtroIngresoDesde.$this->filtroIngresoHasta.$this->filtroSituacion.$this->filtroMesCumple) !== '';
+    }
+
+    public function elegirMesCumple(string $mes): void
+    {
+        abort_unless(Auth::user()->esGth(), 403);
+
+        // Volver a elegir el mes activo quita el criterio.
+        $this->filtroMesCumple = $this->filtroMesCumple === $mes || ! array_key_exists((int) $mes, self::MESES) ? '' : (string) (int) $mes;
+        $this->filtroAbierto = '';
+    }
+
+    public function elegirSituacion(string $situacion): void
+    {
+        abort_unless(Auth::user()->esAdmin(), 403);
+
+        // Volver a elegir la opción activa quita el criterio.
+        $this->filtroSituacion = $this->filtroSituacion === $situacion || ! array_key_exists($situacion, self::SITUACIONES) ? '' : $situacion;
+        $this->filtroAbierto = '';
     }
 
     public function alternarFiltro(string $filtro): void
@@ -582,7 +665,7 @@ new #[Layout('layouts.panel')] class extends Component
 
     public function agregarFiltro(string $filtro): void
     {
-        if (! array_key_exists($filtro, self::FILTROS) || in_array($filtro, $this->filtrosActivos, true)) {
+        if (! array_key_exists($filtro, $this->filtrosDisponibles()) || in_array($filtro, $this->filtrosActivos, true)) {
             return;
         }
 
@@ -599,6 +682,8 @@ new #[Layout('layouts.panel')] class extends Component
             'nombre' => $this->reset('filtroNombre'),
             'dni' => $this->reset('filtroDni'),
             'ingreso' => $this->reset('filtroIngresoDesde', 'filtroIngresoHasta'),
+            'situacion' => $this->reset('filtroSituacion'),
+            'cumple' => $this->reset('filtroMesCumple'),
             default => null,
         };
     }
@@ -610,13 +695,20 @@ new #[Layout('layouts.panel')] class extends Component
             'nombre' => (int) (trim($this->filtroNombre) !== ''),
             'dni' => (int) (trim($this->filtroDni) !== ''),
             'ingreso' => (int) ($this->filtroIngresoDesde !== '' || $this->filtroIngresoHasta !== ''),
+            'situacion' => (int) ($this->filtroSituacion !== ''),
+            'cumple' => (int) ($this->filtroMesCumple !== ''),
             default => 0,
         };
     }
 
-    /** Nombre: todas las palabras escritas, sin importar tildes ni mayúsculas; DNI: contiene lo escrito; ingreso: dentro del rango. */
+    /** Nombre: todas las palabras escritas, sin importar tildes ni mayúsculas; DNI: contiene lo escrito; ingreso: dentro del rango; situación: activos, cesados… (solo administrador); mes de cumpleaños (solo GTH). */
     protected function cumpleFiltros(CandidatoReclutamiento $candidato): bool
     {
+        // GTH solo ve a quienes están activos (contrato vigente, incluidos los que están por vencer).
+        if (Auth::user()->esGth() && ! in_array($candidato->situacion_contrato[3], ['activo', 'por_vencer'], true)) {
+            return false;
+        }
+
         $normalizar = fn (string $texto) => Str::ascii(mb_strtolower($texto));
 
         foreach (array_filter(preg_split('/\s+/u', $normalizar(trim($this->filtroNombre)))) as $palabra) {
@@ -635,6 +727,23 @@ new #[Layout('layouts.panel')] class extends Component
             if (! $ingreso
                 || ($this->filtroIngresoDesde !== '' && $ingreso < $this->filtroIngresoDesde)
                 || ($this->filtroIngresoHasta !== '' && $ingreso > $this->filtroIngresoHasta)) {
+                return false;
+            }
+        }
+
+        if ($this->filtroMesCumple !== '' && Auth::user()->esGth() && $candidato->cumpleanos?->month !== (int) $this->filtroMesCumple) {
+            return false;
+        }
+
+        if ($this->filtroSituacion !== '' && Auth::user()->esAdmin()) {
+            $clave = $candidato->situacion_contrato[3];
+            $coincide = match ($this->filtroSituacion) {
+                'activos' => in_array($clave, ['activo', 'por_vencer'], true),
+                'sin_contrato' => in_array($clave, ['sin_contrato', 'sin_ficha'], true),
+                default => $clave === $this->filtroSituacion,
+            };
+
+            if (! $coincide) {
                 return false;
             }
         }
@@ -800,6 +909,11 @@ new #[Layout('layouts.panel')] class extends Component
         $this->cuentaCtsEdit = (string) $candidato?->cuenta_cts;
         $this->cciEdit = (string) $candidato?->cci;
         $this->bancoGuardado = '';
+        $this->puestoAreaEdit = (string) $candidato?->area;
+        $this->puestoEdit = (string) $candidato?->puesto;
+        $this->campanaEdit = $this->valorDeCatalogo($candidato?->campana);
+        $this->cargoEdit = $this->valorDeCatalogo($candidato?->cargo);
+        $this->puestoGuardado = '';
     }
 
     public function cerrarDatos(): void
@@ -817,6 +931,120 @@ new #[Layout('layouts.panel')] class extends Component
         $this->cuentaCtsEdit = '';
         $this->cciEdit = '';
         $this->bancoGuardado = '';
+        $this->puestoAreaEdit = '';
+        $this->puestoEdit = '';
+        $this->campanaEdit = '';
+        $this->cargoEdit = '';
+        $this->puestoGuardado = '';
+    }
+
+    /** «NO APLICA» y vacíos del candidato se muestran como «sin elegir» en los selectores. */
+    private function valorDeCatalogo(?string $valor): string
+    {
+        $valor = trim((string) $valor);
+
+        return in_array(mb_strtoupper($valor), ['', '-', 'NO APLICA'], true) ? '' : $valor;
+    }
+
+    public function updatedPuestoAreaEdit(): void
+    {
+        $this->puestoEdit = '';
+        $this->campanaEdit = '';
+        $this->cargoEdit = '';
+        $this->puestoGuardado = '';
+    }
+
+    public function updatedPuestoEdit(): void
+    {
+        if (! $this->campanaEditAplica()) {
+            $this->campanaEdit = '';
+        }
+        $this->puestoGuardado = '';
+    }
+
+    public function puestoAreaModelo(): ?Area
+    {
+        return $this->puestoAreaEdit !== '' ? Area::whereRaw('UPPER(nombre) = ?', [mb_strtoupper($this->puestoAreaEdit)])->first() : null;
+    }
+
+    public function puestosEditDisponibles()
+    {
+        $area = $this->puestoAreaModelo();
+
+        return $area ? Puesto::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
+    }
+
+    /** La campaña aplica si el área la usa y el puesto elegido no está marcado «sin campaña». */
+    public function campanaEditAplica(): bool
+    {
+        $area = $this->puestoAreaModelo();
+        if (! $area?->usa_campana) {
+            return false;
+        }
+
+        $puesto = Puesto::where('area_id', $area->id)->whereRaw('UPPER(nombre) = ?', [mb_strtoupper($this->puestoEdit)])->first();
+
+        return $puesto?->usa_campana ?? true;
+    }
+
+    public function campanasEditDisponibles()
+    {
+        $area = $this->puestoAreaModelo();
+
+        return $area ? Campana::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
+    }
+
+    public function cargosEditDisponibles()
+    {
+        $area = $this->puestoAreaModelo();
+
+        return $area ? Cargo::where('area_id', $area->id)->orderBy('nombre')->pluck('nombre') : collect();
+    }
+
+    /** Guarda en Gestión de candidatos (fuente del catálogo) y deja al trabajador con el mismo puesto y campaña. */
+    public function guardarPuestoCampana(): void
+    {
+        $candidato = $this->candidatoParaDatos();
+        if (! $candidato) {
+            return;
+        }
+
+        $this->puestoGuardado = '';
+        $area = $this->puestoAreaModelo();
+        $aplicaCampana = $this->campanaEditAplica();
+        $mayusculas = fn ($coleccion) => $coleccion->map(fn ($nombre) => mb_strtoupper($nombre))->all();
+
+        $this->validate([
+            'puestoAreaEdit' => ['required', fn ($atributo, $valor, $fallo) => $area ? null : $fallo('El área elegida no existe en el catálogo.')],
+            'puestoEdit' => ['required', Rule::in($mayusculas($this->puestosEditDisponibles()))],
+            'campanaEdit' => $aplicaCampana ? ['required', Rule::in($mayusculas($this->campanasEditDisponibles()))] : ['nullable'],
+            'cargoEdit' => $area?->usa_cargo ? ['required', Rule::in($mayusculas($this->cargosEditDisponibles()))] : ['nullable'],
+        ], [
+            'required' => 'Selecciona una opción.',
+            'in' => 'Esa opción no existe en el catálogo de esta área.',
+        ], ['puestoAreaEdit' => 'área', 'puestoEdit' => 'puesto', 'campanaEdit' => 'campaña', 'cargoEdit' => 'cargo']);
+
+        $campana = $aplicaCampana ? $this->campanaEdit : '';
+        $cargo = $area->usa_cargo ? $this->cargoEdit : '';
+
+        $candidato->update([
+            'area' => mb_strtoupper($area->nombre),
+            'puesto' => $this->puestoEdit,
+            'campana' => $campana !== '' ? $campana : 'NO APLICA',
+            'cargo' => $cargo !== '' ? $cargo : 'NO APLICA',
+        ]);
+
+        // Mismo formato que arma la ficha: «Cargo - Puesto - Campaña», p. ej. «EJECUTIVO - MÓVIL», «ANALISTA - RRHH».
+        if ($empleado = $candidato->empleadoVinculado()) {
+            $puesto = $cargo !== '' ? "{$cargo} - {$this->puestoEdit}" : $this->puestoEdit;
+
+            $empleado->update([
+                'puesto' => mb_substr($campana !== '' ? "{$puesto} - {$campana}" : $puesto, 0, 100),
+                'campana' => $campana !== '' ? $campana : null,
+            ]);
+        }
+
+        $this->puestoGuardado = 'Puesto y campaña guardados.';
     }
 
     public function guardarCuspp(): void
@@ -899,7 +1127,7 @@ new #[Layout('layouts.panel')] class extends Component
         }
 
         $this->validate([
-            'contratoFirmadoNuevo' => 'required|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:10240',
+            'contratoFirmadoNuevo' => 'required|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:51200',
         ], [], ['contratoFirmadoNuevo' => 'archivo']);
 
         $existente = $periodo->documentoContrato;
@@ -1468,7 +1696,7 @@ new #[Layout('layouts.panel')] class extends Component
                 'Empresa' => $empleo->empresa,
                 'Cargo' => $empleo->cargo,
                 'Función principal' => $empleo->funcion_principal,
-                'Sueldo' => $empleo->sueldo,
+                'Sueldo' => Auth::user()->esAdmin() ? $empleo->sueldo : null,
                 'Fecha inicio' => $fecha($empleo->fecha_inicio),
                 'Fecha término' => $fecha($empleo->fecha_termino),
                 'Motivo de cese' => $empleo->motivo_cese,
@@ -1536,20 +1764,6 @@ new #[Layout('layouts.panel')] class extends Component
 ?>
 
 <div class="space-y-6">
-    <div>
-        <h2 class="mt-2 text-2xl font-bold text-slate-900">Registro de ingresos</h2>
-    </div>
-
-    @unless ($this->correoConfigurado())
-        <div class="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            El envío de correos aún no está configurado en el servidor (falta el SMTP). Mientras tanto puedes guardar los correos corporativos y copiar los links manualmente.
-        </div>
-    @endunless
-
-    @if ($mensajeEnvio)
-        <p class="text-sm text-slate-600">{{ $mensajeEnvio }}</p>
-    @endif
-
     <div class="reclutamiento-filter-bar">
         @if ($filtroAbierto !== '')
             <button type="button" wire:click="cerrarFiltro" class="fixed inset-0 z-30 cursor-default" aria-label="Cerrar filtro" tabindex="-1"></button>
@@ -1572,9 +1786,25 @@ new #[Layout('layouts.panel')] class extends Component
                 @if ($filtroAbierto === $filtro)
                     <div class="reclutamiento-filter-popover">
                         @if ($filtro === 'nombre')
-                            <input type="text" wire:model.live.debounce.300ms="filtroNombre" wire:key="in-nombre" class="reclutamiento-filter-popover-search !mb-0" placeholder="Apellidos o nombres..." autofocus>
+                            <input type="text" wire:model.live.debounce.300ms="filtroNombre" wire:key="in-nombre" wire:keydown.enter.prevent="cerrarFiltro" class="reclutamiento-filter-popover-search !mb-0" placeholder="Apellidos o nombres..." autofocus>
                         @elseif ($filtro === 'dni')
-                            <input type="text" inputmode="numeric" wire:model.live.debounce.300ms="filtroDni" wire:key="in-dni" class="reclutamiento-filter-popover-search !mb-0" placeholder="Número de documento..." autofocus>
+                            <input type="text" inputmode="numeric" wire:model.live.debounce.300ms="filtroDni" wire:key="in-dni" wire:keydown.enter.prevent="cerrarFiltro" class="reclutamiento-filter-popover-search !mb-0" placeholder="Número de documento..." autofocus>
+                        @elseif ($filtro === 'cumple')
+                            <div class="reclutamiento-filter-popover-list">
+                                @foreach (self::MESES as $numero => $nombreMes)
+                                    <button type="button" wire:key="mes-{{ $numero }}" wire:click="elegirMesCumple('{{ $numero }}')" aria-pressed="{{ $filtroMesCumple === (string) $numero ? 'true' : 'false' }}" class="reclutamiento-filter-popover-option w-full text-left {{ $filtroMesCumple === (string) $numero ? 'bg-primary/10 font-semibold text-primary' : '' }}">
+                                        <span aria-hidden="true">{{ $filtroMesCumple === (string) $numero ? '●' : '○' }}</span> {{ $nombreMes }}
+                                    </button>
+                                @endforeach
+                            </div>
+                        @elseif ($filtro === 'situacion')
+                            <div class="reclutamiento-filter-popover-list">
+                                @foreach (self::SITUACIONES as $clave => $etiqueta)
+                                    <button type="button" wire:key="sit-{{ $clave }}" wire:click="elegirSituacion('{{ $clave }}')" aria-pressed="{{ $filtroSituacion === $clave ? 'true' : 'false' }}" class="reclutamiento-filter-popover-option w-full text-left {{ $filtroSituacion === $clave ? 'bg-primary/10 font-semibold text-primary' : '' }}">
+                                        <span aria-hidden="true">{{ $filtroSituacion === $clave ? '●' : '○' }}</span> {{ $etiqueta }}
+                                    </button>
+                                @endforeach
+                            </div>
                         @else
                             <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Desde</label>
                             <input type="date" wire:model.live="filtroIngresoDesde" wire:key="in-desde" class="reclutamiento-filter-popover-search">
@@ -1586,7 +1816,7 @@ new #[Layout('layouts.panel')] class extends Component
             </div>
         @endforeach
 
-        @if (count($filtrosActivos) < count(self::FILTROS))
+        @if (count(array_intersect($filtrosActivos, array_keys($this->filtrosDisponibles()))) < count($this->filtrosDisponibles()))
             <div class="reclutamiento-filter-chip">
                 <button type="button" wire:click="alternarFiltro('agregar')" class="reclutamiento-filter-chip-button{{ $filtroAbierto === 'agregar' ? ' is-open' : '' }}">
                     <span>+ Añadir filtro</span>
@@ -1594,7 +1824,7 @@ new #[Layout('layouts.panel')] class extends Component
                 @if ($filtroAbierto === 'agregar')
                     <div class="reclutamiento-filter-popover">
                         <div class="reclutamiento-filter-popover-list">
-                            @foreach (self::FILTROS as $clave => $etiqueta)
+                            @foreach ($this->filtrosDisponibles() as $clave => $etiqueta)
                                 @unless (in_array($clave, $filtrosActivos, true))
                                     <button type="button" wire:click="agregarFiltro('{{ $clave }}')" class="reclutamiento-filter-popover-option w-full text-left">{{ $etiqueta }}</button>
                                 @endunless
@@ -1614,17 +1844,23 @@ new #[Layout('layouts.panel')] class extends Component
                     <th>DNI / C.E</th>
                     <th>Puesto</th>
                     <th>Campaña</th>
-                    <th>Agente reclutador</th>
+                    @unless (auth()->user()->esGth())
+                        <th>Agente reclutador</th>
+                    @endunless
                     <th>Fecha APTO</th>
                     <th>Fecha de ingreso</th>
-                    <th>Invitación</th>
-                    <th>Formulario</th>
+                    @if (auth()->user()->esAdmin())
+                        <th>Situación</th>
+                    @endif
+                    @if (auth()->user()->esGth())
+                        <th>Cumpleaños</th>
+                    @endif
                 </tr>
             </thead>
             <tbody>
                 @forelse ($this->candidatosAptos() as $candidato)
-                    @php($invitacion = $this->invitacionDe($candidato))
-                    <tr wire:key="apto-{{ $candidato->id }}">
+                    @php($cumpleEsteMes = $candidato->cumpleanos && $candidato->cumpleanos->month === now('America/Lima')->month)
+                    <tr wire:key="apto-{{ $candidato->id }}" @class(['registro-fila-cumple' => $cumpleEsteMes])>
                         <td class="font-medium text-slate-900">
                             <div class="flex items-center gap-2">
                                 <span>{{ $candidato->nombre_mostrado ?: 'Sin nombre' }}</span>
@@ -1647,63 +1883,35 @@ new #[Layout('layouts.panel')] class extends Component
                         <td>{{ $candidato->dni_mostrado ?: '-' }}</td>
                         <td>{{ $candidato->puesto ?: '-' }}</td>
                         <td>{{ $candidato->campana ?: '-' }}</td>
-                        <td>{{ $candidato->agente_reclutador ?: '-' }}</td>
+                        @unless (auth()->user()->esGth())
+                            <td>{{ $candidato->agente_reclutador ?: '-' }}</td>
+                        @endunless
                         <td>{{ $candidato->fecha_apto?->format('d/m/Y') ?? '-' }}</td>
                         <td>{{ $candidato->fecha_ingreso_contrato?->format('d/m/Y') ?? '-' }}</td>
-                        <td>
-                            <div class="space-y-1.5">
-                            @if ($invitacion && $invitacion->estaVigente())
-                                <input type="text" readonly value="{{ $invitacion->url() }}" onclick="this.select()" class="form-input w-56 py-1 text-xs" title="Clic para seleccionar y copiar el enlace" />
-                            @elseif ($invitacion?->usado_en)
-                                <span class="badge badge-green">Usada</span>
-                            @else
-                                <button type="button" wire:click="generarInvitacion({{ $candidato->id }})" class="btn-secondary w-auto">
-                                    {{ $invitacion ? 'Regenerar link' : 'Generar link de ficha' }}
-                                </button>
-                            @endif
-
-                                @unless ($invitacion?->empleado)
-                                    @php($estadoCorreo = $invitacion?->estadoCorreo() ?? 'sin-enviar')
-                                    @if ($estadoCorreo === 'enviado')
-                                        <p class="text-xs text-emerald-600">✔ Enviado a {{ $invitacion->correo_a }} · {{ $invitacion->correo_enviado_at->timezone('America/Lima')->format('d/m H:i') }}</p>
-                                    @elseif ($estadoCorreo === 'en-cola')
-                                        <p class="text-xs text-amber-600">Enviando a {{ $invitacion->correo_a }}…</p>
-                                    @elseif ($estadoCorreo === 'error')
-                                        <p class="text-xs text-rose-600" title="{{ $invitacion->correo_error }}">✖ Error al enviar a {{ $invitacion->correo_a }}</p>
+                        @if (auth()->user()->esAdmin())
+                            <td><span class="badge {{ $candidato->situacion_contrato[1] }} whitespace-nowrap" title="{{ $candidato->situacion_contrato[2] }}">{{ $candidato->situacion_contrato[0] }}</span></td>
+                        @endif
+                        @if (auth()->user()->esGth())
+                            <td class="whitespace-nowrap">
+                                @if ($candidato->cumpleanos)
+                                    @php($hoyLima = now('America/Lima'))
+                                    <span class="{{ $cumpleEsteMes ? 'font-semibold text-amber-700' : '' }}" title="{{ $candidato->cumpleanos->format('d/m/Y') }}">
+                                        @if ($cumpleEsteMes)🎂 @endif{{ $candidato->cumpleanos->locale('es')->isoFormat('D [de] MMMM') }}
+                                    </span>
+                                    @if ($cumpleEsteMes)
+                                        <span class="block text-[11px] text-amber-700">
+                                            {{ $candidato->cumpleanos->day === $hoyLima->day ? '¡Hoy cumple '.($hoyLima->year - $candidato->cumpleanos->year).'!' : 'Cumple '.($hoyLima->year - $candidato->cumpleanos->year).' años' }}
+                                        </span>
                                     @endif
-
-                                    @unless ($candidato->correoCorporativo())
-                                        <p class="text-xs text-slate-400">Sin correo corporativo (agrégalo en Datos).</p>
-                                    @endunless
-
-                                    @if ($candidato->correoCorporativo() && $this->correoConfigurado())
-                                        @php($textoEnvio = in_array($estadoCorreo, ['enviado', 'error'], true) ? 'Reenviar correo' : 'Enviar por correo')
-                                        <button type="button" wire:click="enviarLink({{ $candidato->id }})" wire:loading.attr="disabled" wire:target="enviarLink({{ $candidato->id }})" class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 disabled:opacity-40" title="{{ $textoEnvio }}" aria-label="{{ $textoEnvio }}">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-send" viewBox="0 0 16 16" aria-hidden="true">
-                                                <path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>
-                                            </svg>
-                                        </button>
-                                    @endif
-                                @endunless
-                            </div>
-                        </td>
-                        <td>
-                            @if ($invitacion?->empleado)
-                                <button
-                                    type="button"
-                                    wire:click="abrirFicha({{ $invitacion->empleado->id }})"
-                                    class="badge badge-green transition hover:opacity-80"
-                                >
-                                    Completado ({{ ucfirst($invitacion->empleado->estado) }})
-                                </button>
-                            @else
-                                <span class="text-xs text-slate-400">Pendiente</span>
-                            @endif
-                        </td>
+                                @else
+                                    <span class="text-slate-400">-</span>
+                                @endif
+                            </td>
+                        @endif
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="9" class="px-4 py-8 text-center text-sm text-slate-400">
+                        <td colspan="{{ auth()->user()->esAdmin() ? 8 : 7 }}" class="px-4 py-8 text-center text-sm text-slate-400">
                             {{ $this->hayFiltros() ? 'Ningún registro coincide con los filtros.' : 'Todavía no hay candidatos marcados como aptos en Proceso de capacitación.' }}
                         </td>
                     </tr>
@@ -2179,6 +2387,9 @@ new #[Layout('layouts.panel')] class extends Component
                 @else
                 <div class="flex min-h-0 flex-1">
                     <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4 space-y-3">
+                        @unless (isset($datosContacto['secciones']['Puesto al que ingresa']) || isset($datosContacto['secciones']['Reclutamiento']))
+                            @include('partials.registro-ingresos.puesto-campana')
+                        @endunless
                         @unless (isset($datosContacto['secciones']['Datos personales']))
                             @include('partials.registro-ingresos.correo-corporativo')
                         @endunless
@@ -2217,6 +2428,9 @@ new #[Layout('layouts.panel')] class extends Component
                                 </dl>
                             </div>
 
+                            @if (in_array($tituloSeccion, ['Puesto al que ingresa', 'Reclutamiento'], true))
+                                @include('partials.registro-ingresos.puesto-campana')
+                            @endif
                             @if ($tituloSeccion === 'Datos personales')
                                 @include('partials.registro-ingresos.correo-corporativo')
                             @endif

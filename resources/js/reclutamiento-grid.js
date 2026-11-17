@@ -146,6 +146,17 @@ const callLivewire = (method, ...params) => {
     }
 };
 
+// Pedir el bloqueo en cada tecla saturaba el servidor. El bloqueo dura 1 minuto y guardarFila también lo renueva,
+// así que basta con renovarlo cada 20 segundos mientras se escribe.
+const ultimosBloqueos = new Map();
+const solicitarBloqueo = (id) => {
+    const ahora = Date.now();
+    if (ahora - (ultimosBloqueos.get(String(id)) ?? 0) < 20000) return;
+
+    ultimosBloqueos.set(String(id), ahora);
+    callLivewire('bloquearFila', id);
+};
+
 const scheduleRowSave = (row) => {
     if (!window.__reclutamientoSaveTimers) window.__reclutamientoSaveTimers = new Map();
 
@@ -175,8 +186,8 @@ const clearRowDirty = (rowId) => {
     window.__reclutamientoDirty = window.__reclutamientoDirtyRows.size > 0;
 };
 
-const setRowLockState = (rowId, locked, userName = '', ownerId = null) => {
-    const row = document.querySelector(`tr[data-candidato-id="${rowId}"]`);
+const setRowLockState = (rowId, locked, userName = '', ownerId = null, elemento = null) => {
+    const row = elemento || document.querySelector(`tr[data-candidato-id="${rowId}"]`);
     if (!row) return;
     if (row.dataset.graduated === 'true') return;
 
@@ -452,11 +463,6 @@ const createCell = (key, value = '', row = {}) => {
     }
 
     if (SELECT_FIELDS.has(key)) {
-        const emptyOption = document.createElement('option');
-        emptyOption.value = '';
-        emptyOption.textContent = 'Seleccionar';
-        cell.appendChild(emptyOption);
-
         const opcionesPorCampo = {
             mes: () => MONTHS,
             agente_reclutador: () => getAgentesReclutadores(),
@@ -471,21 +477,36 @@ const createCell = (key, value = '', row = {}) => {
             asistio_entrevista_reprogramada: () => getAsistioReprogramadaOptions(),
         };
 
-        const options = (opcionesPorCampo[key] ?? (() => ['SI', 'NO']))();
-
-        const normalizedValue = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
-        const availableOptions = options.includes(normalizedValue) || !normalizedValue
-            ? options
-            : [normalizedValue, ...options];
-
-        availableOptions.forEach((optionValue) => {
+        const agregarOpcion = (valor, texto = valor) => {
             const option = document.createElement('option');
-            option.value = optionValue;
-            option.textContent = optionValue;
+            option.value = valor;
+            option.textContent = texto;
             cell.appendChild(option);
-        });
+        };
 
-        cell.value = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
+        // Una grilla con cientos de filas y ~12 desplegables por fila pesaba decenas de miles de <option>.
+        // Cada desplegable nace solo con su valor actual y recibe la lista completa la primera vez que se usa.
+        const valorInicial = TEXT_FIELDS.has(key) ? String(value).toUpperCase() : value;
+        agregarOpcion('', 'Seleccionar');
+        if (valorInicial) agregarOpcion(valorInicial);
+        cell.value = valorInicial;
+        cell.dataset.lazy = 'true';
+
+        const llenarOpciones = () => {
+            if (cell.dataset.lazy !== 'true') return;
+            delete cell.dataset.lazy;
+
+            const valorActual = cell.value;
+            const opciones = (opcionesPorCampo[key] ?? (() => ['SI', 'NO']))();
+            const disponibles = opciones.includes(valorActual) || !valorActual ? opciones : [valorActual, ...opciones];
+
+            cell.replaceChildren();
+            agregarOpcion('', 'Seleccionar');
+            disponibles.forEach((opcion) => agregarOpcion(opcion));
+            cell.value = valorActual;
+        };
+
+        ['focus', 'mousedown', 'keydown'].forEach((evento) => cell.addEventListener(evento, llenarOpciones));
     } else {
         cell.type = key === 'edad'
             ? 'number'
@@ -582,6 +603,7 @@ const applyConditionalFieldLocks = (rowElement) => {
 };
 
 const repoblarOpciones = (select, opciones, valorPreferido = '') => {
+    delete select.dataset.lazy;
     const valorAntes = select.value;
     select.innerHTML = '';
 
@@ -606,6 +628,8 @@ const repoblarOpciones = (select, opciones, valorPreferido = '') => {
 const actualizarCampoDependienteDeArea = (tr, row, key, opciones, aplica) => {
     const field = tr?.querySelector(`[data-field="${key}"]`);
     if (!field) return;
+
+    delete field.dataset.lazy;
 
     if (!aplica) {
         field.innerHTML = '';
@@ -643,9 +667,7 @@ const marcarInteresadoApto = (tr, row) => {
 const bindInput = (row, key, input, hiddenInput, rows) => {
     const update = () => {
         markRowDirty(row);
-        if (isPersistedRow(row)) {
-            callLivewire('bloquearFila', row.id);
-        }
+        if (isPersistedRow(row)) solicitarBloqueo(row.id);
 
         if (key === 'edad') {
             const digits = input.value.replace(/\D/g, '').slice(0, 2);
@@ -667,7 +689,17 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             const month = getMonthFromDate(input.value);
             row.mes = month;
             const monthField = input.closest('tr')?.querySelector('[data-field="mes"]');
-            if (monthField) monthField.value = month;
+            if (monthField) {
+                // El desplegable es "lazy": solo trae su valor actual, así que el mes nuevo
+                // no existe como <option> y asignar .value lo dejaría en blanco.
+                if (month && ![...monthField.options].some((option) => option.value === month)) {
+                    const option = document.createElement('option');
+                    option.value = month;
+                    option.textContent = month;
+                    monthField.appendChild(option);
+                }
+                monthField.value = month;
+            }
         }
 
         if (key === 'area') {
@@ -699,7 +731,6 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
             }
         }
 
-        syncHiddenInput(rows, hiddenInput);
         scheduleRowSave(row);
     };
 
@@ -707,35 +738,36 @@ const bindInput = (row, key, input, hiddenInput, rows) => {
     input.addEventListener('change', update);
 };
 
+const medidorDeTexto = document.createElement('canvas').getContext('2d');
+
 const getContentColumnWidth = (table, header, columnIndex) => {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    const headerStyle = window.getComputedStyle(header);
+    const controles = table.querySelectorAll(`tbody tr td:nth-child(${columnIndex + 1}) input, tbody tr td:nth-child(${columnIndex + 1}) select`);
 
-    const values = [{
-        text: header.textContent.trim(),
-        font: headerStyle.font,
-    }];
-    table.querySelectorAll(`tbody tr td:nth-child(${columnIndex + 1}) input, tbody tr td:nth-child(${columnIndex + 1}) select`).forEach((input) => {
-        values.push({
-            text: input.value,
-            font: window.getComputedStyle(input).font,
+    medidorDeTexto.font = window.getComputedStyle(header).font;
+    let widestValue = medidorDeTexto.measureText(header.textContent.trim()).width;
+
+    // Todos los controles de una columna comparten fuente: se mide una sola vez y solo los textos distintos.
+    if (controles.length) {
+        medidorDeTexto.font = window.getComputedStyle(controles[0]).font;
+        const vistos = new Set();
+        controles.forEach((control) => {
+            if (vistos.has(control.value)) return;
+            vistos.add(control.value);
+            widestValue = Math.max(widestValue, medidorDeTexto.measureText(control.value).width);
         });
-    });
-
-    const widestValue = values.reduce((widest, value) => {
-        context.font = value.font;
-        return Math.max(widest, context.measureText(value.text).width);
-    }, 0);
+    }
 
     const controlsPadding = 40;
     const selectArrowSpace = table.querySelector(`tbody tr td:nth-child(${columnIndex + 1}) select`) ? 28 : 0;
     return Math.max(72, Math.ceil(widestValue + controlsPadding + selectArrowSpace));
 };
-
 const MIN_COLUMN_WIDTH = 48;
 const ANCHOS_KEY = 'reclutamiento.anchos-columnas';
-const NOMBRES_FIJO_KEY = 'reclutamiento.nombres-fijo';
+// Columnas que el usuario puede fijar a la izquierda (como "inmovilizar" en Excel).
+const COLUMNAS_FIJABLES = {
+    nombres: { clase: 'reclutamiento-col-nombres', fijada: 'reclutamiento-frozen', preferencia: 'reclutamiento.nombres-fijo', etiqueta: 'Nombres' },
+    numero_celular: { clase: 'reclutamiento-col-celular', fijada: 'reclutamiento-frozen-celular', preferencia: 'reclutamiento.celular-fijo', etiqueta: 'Número celular' },
+};
 
 const leerPreferencia = (clave, porDefecto) => {
     try {
@@ -757,12 +789,16 @@ const guardarPreferencia = (clave, valor) => {
 const ajustarAnchoTabla = (table, colgroup) => {
     const total = [...colgroup.children].reduce((suma, columna) => suma + (Number.parseFloat(columna.style.width) || 0), 0);
     table.style.width = `${total}px`;
+
+    // La columna de celular fijada se apoya en el borde derecho de Nombres cuando ambas están fijadas.
+    const nombres = table.querySelector('thead .reclutamiento-col-nombres');
+    if (nombres) table.style.setProperty('--reclutamiento-nombres-ancho', `${nombres.getBoundingClientRect().width}px`);
 };
 
 const setupColumnResizing = (table) => {
     table.style.tableLayout = 'fixed';
-    // Antes del bucle: el encabezado de Nombres no debe recibir `relative`, que anularía su `sticky`.
-    prepararColumnaNombres(table);
+    // Antes del bucle: los encabezados fijables no deben recibir `relative`, que anularía su `sticky`.
+    Object.keys(COLUMNAS_FIJABLES).forEach((key) => prepararColumnaFijable(table, key));
 
     let colgroup = table.querySelector('colgroup');
     if (!colgroup) {
@@ -808,7 +844,7 @@ const setupColumnResizing = (table) => {
         if (header.dataset.resizable === 'true') return;
 
         header.dataset.resizable = 'true';
-        if (!header.classList.contains('reclutamiento-col-nombres')) header.classList.add('relative');
+        if (!Object.values(COLUMNAS_FIJABLES).some((columna) => header.classList.contains(columna.clase))) header.classList.add('relative');
         const handle = document.createElement('span');
         handle.className = 'absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none hover:bg-sky-200';
         handle.setAttribute('aria-label', 'Ajustar ancho de columna');
@@ -840,13 +876,20 @@ const setupColumnResizing = (table) => {
     ajustarAnchoTabla(table, colgroup);
 };
 
-/** La columna Nombres puede fijarse a la izquierda (como "inmovilizar" en Excel); la elección se recuerda. */
-const prepararColumnaNombres = (table) => {
-    const header = table.querySelectorAll('thead tr:last-child th')[FIELD_KEYS.indexOf('nombres')];
-    if (!header || header.dataset.fijable === 'true') return;
+// Reajustar anchos mide toda la tabla: se agrupa en un solo cálculo tras dejar de escribir.
+const programarAjusteColumnas = (table) => {
+    window.clearTimeout(table.__ajusteColumnas);
+    table.__ajusteColumnas = window.setTimeout(() => setupColumnResizing(table), 300);
+};
+
+/** Una columna fijable puede fijarse a la izquierda; la elección se recuerda por columna. */
+const prepararColumnaFijable = (table, key) => {
+    const config = COLUMNAS_FIJABLES[key];
+    const header = table.querySelectorAll('thead tr:last-child th')[FIELD_KEYS.indexOf(key)];
+    if (!config || !header || header.dataset.fijable === 'true') return;
 
     header.dataset.fijable = 'true';
-    header.classList.add('reclutamiento-col-nombres');
+    header.classList.add(config.clase);
 
     const boton = document.createElement('button');
     boton.type = 'button';
@@ -859,19 +902,19 @@ const prepararColumnaNombres = (table) => {
     `;
 
     const aplicar = (fijo) => {
-        table.classList.toggle('reclutamiento-frozen', fijo);
+        table.classList.toggle(config.fijada, fijo);
         boton.setAttribute('aria-pressed', String(fijo));
-        boton.title = fijo ? 'Soltar la columna Nombres' : 'Fijar la columna Nombres al desplazarse';
+        boton.title = fijo ? `Soltar la columna ${config.etiqueta}` : `Fijar la columna ${config.etiqueta} al desplazarse`;
         boton.setAttribute('aria-label', boton.title);
     };
 
     boton.addEventListener('click', () => {
-        const fijo = !table.classList.contains('reclutamiento-frozen');
+        const fijo = !table.classList.contains(config.fijada);
         aplicar(fijo);
-        guardarPreferencia(NOMBRES_FIJO_KEY, fijo);
+        guardarPreferencia(config.preferencia, fijo);
     });
 
-    aplicar(leerPreferencia(NOMBRES_FIJO_KEY, false) === true);
+    aplicar(leerPreferencia(config.preferencia, false) === true);
     header.insertBefore(boton, header.firstChild);
 };
 
@@ -1031,8 +1074,36 @@ const buildSingleValueFilterBody = (popover, filtro, onChange) => {
     input.value = filtro.texto || '';
     input.placeholder = 'Buscar...';
     input.addEventListener('input', () => { filtro.texto = input.value; onChange(); });
+    cerrarConEnter(input);
     popover.appendChild(input);
 };
+
+// Texto libre: todas las palabras escritas, sin tildes ni mayúsculas. Teléfonos y documentos se guardan con espacios
+// o guiones ("929 701 107"), así que si lo escrito es un número se compara solo por dígitos.
+const textoCoincide = (rawValue, texto) => {
+    const buscado = normalizeForSearch(texto).trim();
+    if (!buscado) return true;
+
+    const valor = normalizeForSearch(rawValue);
+    if (buscado.split(/\s+/).every((palabra) => valor.includes(palabra))) return true;
+
+    if (/^[\d\s().+-]+$/.test(buscado)) {
+        // Un celular pegado con el prefijo del país (+51) también debe encontrarse.
+        const digitos = buscado.replace(/\D+/g, '').replace(/^51(?=\d{9}$)/, '');
+        return digitos !== '' && String(rawValue ?? '').replace(/\D+/g, '').includes(digitos);
+    }
+
+    return false;
+};
+
+// Enter en un cuadro de búsqueda del filtro: el filtro ya se aplica al escribir, así que solo cierra el menú.
+const cerrarConEnter = (input) => input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    closeAllFilterPopovers();
+});
+
+const esFiltroDeLista = (filtro) => isSelectColumn(filtro.column) || SELECT_FIELDS.has(filtro.column);
 
 const filterMatchesRow = (filtro, row) => {
     const rawValue = row[filtro.column];
@@ -1045,25 +1116,26 @@ const filterMatchesRow = (filtro, row) => {
         return true;
     }
 
-    if (filtro.values) {
-        if (!filtro.values.length) return true;
+    // Los filtros nuevos nacen con values: [] también en las columnas de texto; solo las de lista usan values.
+    if (esFiltroDeLista(filtro)) {
+        if (!filtro.values?.length) return true;
         return filtro.values.includes(String(rawValue ?? '').toUpperCase());
     }
 
-    if (!filtro.texto) return true;
-    return normalizeForSearch(rawValue).includes(normalizeForSearch(filtro.texto).trim());
+    return textoCoincide(rawValue, filtro.texto);
 };
 
 const applyRowFilter = (rows, tbody) => {
     const filtros = window.__reclutamientoFiltros;
+    const filasPorId = new Map(rows.map((row) => [String(row.id), row]));
 
-    rows.forEach((row) => {
-        const rowElement = tbody.querySelector(`tr[data-candidato-id="${row.id}"]`);
-        if (!rowElement) return;
+    for (const rowElement of tbody.rows) {
+        const row = filasPorId.get(rowElement.dataset.candidatoId);
+        if (!row) continue;
 
         const matches = filtros.every((filtro) => filterMatchesRow(filtro, row));
         rowElement.classList.toggle('hidden', !matches);
-    });
+    }
 };
 
 const createFilterChip = (filtro, rows, tbody, container, onRemove, autoOpen = false) => {
@@ -1100,11 +1172,11 @@ const createFilterChip = (filtro, rows, tbody, container, onRemove, autoOpen = f
         label.textContent = FIELD_LABELS[filtro.column] || filtro.column;
         button.appendChild(label);
 
-        const count = filtro.values ? filtro.values.length : (filtro.texto || filtro.desde || filtro.hasta) ? 1 : 0;
+        const count = esFiltroDeLista(filtro) ? (filtro.values?.length ?? 0) : (filtro.texto || filtro.desde || filtro.hasta) ? 1 : 0;
         if (count > 0) {
             const badge = document.createElement('span');
             badge.className = 'reclutamiento-filter-chip-count';
-            badge.textContent = filtro.values ? String(count) : '1';
+            badge.textContent = String(count);
             button.appendChild(badge);
         }
         button.classList.toggle('is-active', count > 0);
@@ -1122,7 +1194,7 @@ const createFilterChip = (filtro, rows, tbody, container, onRemove, autoOpen = f
             applyRowFilter(rows, tbody);
         };
 
-        if (isSelectColumn(filtro.column) || SELECT_FIELDS.has(filtro.column)) {
+        if (esFiltroDeLista(filtro)) {
             filtro.values = filtro.values || [];
             buildSelectFilterBody(popover, filtro, rows, onChange);
         } else {
@@ -1415,121 +1487,135 @@ const setupObsPopover = () => {
     });
 };
 
-const renderTable = (rows, tbody, hiddenInput, table) => {
-    tbody.innerHTML = '';
+const construirFila = (row, indice, rows, tbody, hiddenInput, table) => {
+    const tr = document.createElement('tr');
+    tr.className = 'border-b border-slate-200 align-top';
+    tr.dataset.candidatoId = row.id;
+    tr.dataset.graduated = row.graduado ? 'true' : 'false';
+    marcarInteresadoApto(tr, row);
 
-    rows.forEach((row) => {
-        const tr = document.createElement('tr');
-        tr.className = 'border-b border-slate-200 align-top';
-        tr.dataset.candidatoId = row.id;
-        tr.dataset.graduated = row.graduado ? 'true' : 'false';
-        marcarInteresadoApto(tr, row);
+    const numberCell = document.createElement('td');
+    numberCell.className = 'reclutamiento-row-number';
+    numberCell.textContent = indice + 1;
+    tr.appendChild(numberCell);
 
-        const numberCell = document.createElement('td');
-        numberCell.className = 'reclutamiento-row-number';
-        numberCell.textContent = rows.indexOf(row) + 1;
-        tr.appendChild(numberCell);
+    FIELD_KEYS.forEach((key) => {
+        const td = document.createElement('td');
+        td.className = `${COLUMNAS_FIJABLES[key]?.clase ? `${COLUMNAS_FIJABLES[key].clase} ` : ''}border-r border-slate-200 align-top`;
+        const input = createCell(key, row[key] ?? '', row);
+        bindInput(row, key, input, hiddenInput, rows);
+        td.appendChild(input);
+        tr.appendChild(td);
+    });
 
-        FIELD_KEYS.forEach((key) => {
-            const td = document.createElement('td');
-            td.className = key === 'nombres' ? 'reclutamiento-col-nombres border-r border-slate-200 align-top' : 'border-r border-slate-200 align-top';
-            const input = createCell(key, row[key] ?? '', row);
-            bindInput(row, key, input, hiddenInput, rows);
-            input.addEventListener('change', () => setupColumnResizing(table));
-            input.addEventListener('input', () => setupColumnResizing(table));
-
-            td.appendChild(input);
-            tr.appendChild(td);
-        });
-
-        const removeCell = document.createElement('td');
-        removeCell.className = 'px-2 py-2';
-        const removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.dataset.removeRow = 'true';
-        removeButton.setAttribute('aria-label', 'Eliminar candidato');
-        removeButton.title = filaEliminable(row) ? 'Eliminar fila' : 'Solo se pueden eliminar filas sin datos del candidato';
-        removeButton.disabled = !filaEliminable(row);
-        removeButton.className = 'inline-flex h-8 w-8 items-center justify-center rounded bg-rose-50 text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40';
-        removeButton.innerHTML = `
-            <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18" />
-                <path d="M8 6V4h8v2" />
-                <path d="M19 6l-1 14H6L5 6" />
-                <path d="M10 11v5" />
-                <path d="M14 11v5" />
-            </svg>
-        `;
-        removeButton.addEventListener('click', () => {
-            if (removeButton.disabled || tr.dataset.locked === 'true') {
-                if (!filaEliminable(row)) {
-                    window.__reclutamientoNotify?.('No es posible eliminar candidatos con datos.', 'warning');
-                } else {
-                    window.__reclutamientoNotify?.('Esta fila está siendo editada por otro usuario.', 'warning');
-                }
-                return;
-            }
-
-            const index = rows.indexOf(row);
-            if (index < 0) return;
-
-            if (isPersistedRow(row)) {
-                callLivewire('eliminarFila', Number(row.id));
-            }
-
-            rows.splice(index, 1);
-            renderTable(rows, tbody, hiddenInput, table);
-            setupColumnResizing(table);
-            syncHiddenInput(rows, hiddenInput);
-        });
-        removeCell.appendChild(removeButton);
-
-        if (row.graduado) {
-            const badge = document.createElement('span');
-            badge.classList.add('reclutamiento-graduated-badge', 'mt-1', 'block', 'w-fit');
-
-            if (row.no_apto_capacitacion) {
-                badge.classList.add('reclutamiento-graduated-badge-rejected');
-                badge.textContent = 'NO APTO';
-                badge.setAttribute('tabindex', '0');
-                badge.setAttribute('data-tooltip', row.no_apto_detalle || 'No apto en capacitación');
+    const removeCell = document.createElement('td');
+    removeCell.className = 'px-2 py-2';
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.dataset.removeRow = 'true';
+    removeButton.setAttribute('aria-label', 'Eliminar candidato');
+    removeButton.title = filaEliminable(row) ? 'Eliminar fila' : 'Solo se pueden eliminar filas sin datos del candidato';
+    removeButton.disabled = !filaEliminable(row);
+    removeButton.className = 'inline-flex h-8 w-8 items-center justify-center rounded bg-rose-50 text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40';
+    removeButton.innerHTML = `
+        <svg aria-hidden="true" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="M19 6l-1 14H6L5 6" />
+            <path d="M10 11v5" />
+            <path d="M14 11v5" />
+        </svg>
+    `;
+    removeButton.addEventListener('click', () => {
+        if (removeButton.disabled || tr.dataset.locked === 'true') {
+            if (!filaEliminable(row)) {
+                window.__reclutamientoNotify?.('No es posible eliminar candidatos con datos.', 'warning');
             } else {
-                badge.textContent = 'En capacitación';
+                window.__reclutamientoNotify?.('Esta fila está siendo editada por otro usuario.', 'warning');
             }
-
-            removeCell.appendChild(badge);
+            return;
         }
 
-        const lockStatus = document.createElement('span');
-        lockStatus.dataset.lockStatus = 'true';
-        lockStatus.className = 'reclutamiento-lock-indicator mt-1 hidden';
-        lockStatus.textContent = 'En edición';
-        lockStatus.setAttribute('role', 'status');
-        removeCell.appendChild(lockStatus);
-        tr.appendChild(removeCell);
-        tbody.appendChild(tr);
+        const index = rows.indexOf(row);
+        if (index < 0) return;
 
-        applyRowLockState(row);
-        applyConditionalFieldLocks(tr);
+        if (isPersistedRow(row)) {
+            callLivewire('eliminarFila', Number(row.id));
+        }
+
+        rows.splice(index, 1);
+        tr.remove();
+        renumerarFilas(tbody);
+        programarAjusteColumnas(table);
+        syncHiddenInput(rows, hiddenInput);
     });
+    removeCell.appendChild(removeButton);
+
+    if (row.graduado) {
+        const badge = document.createElement('span');
+        badge.classList.add('reclutamiento-graduated-badge', 'mt-1', 'block', 'w-fit');
+
+        if (row.no_apto_capacitacion) {
+            badge.classList.add('reclutamiento-graduated-badge-rejected');
+            badge.textContent = 'NO APTO';
+            badge.setAttribute('tabindex', '0');
+            badge.setAttribute('data-tooltip', row.no_apto_detalle || 'No apto en capacitación');
+        } else {
+            badge.textContent = 'En capacitación';
+        }
+
+        removeCell.appendChild(badge);
+    }
+
+    const lockStatus = document.createElement('span');
+    lockStatus.dataset.lockStatus = 'true';
+    lockStatus.className = 'reclutamiento-lock-indicator mt-1 hidden';
+    lockStatus.textContent = 'En edición';
+    lockStatus.setAttribute('role', 'status');
+    removeCell.appendChild(lockStatus);
+    tr.appendChild(removeCell);
+
+    applyRowLockState(row, tr);
+    applyConditionalFieldLocks(tr);
+    return tr;
+};
+
+const renumerarFilas = (tbody) => {
+    let numero = 0;
+    for (const tr of tbody.rows) {
+        const celda = tr.firstElementChild;
+        if (celda) celda.textContent = ++numero;
+    }
+};
+
+const renderTable = (rows, tbody, hiddenInput, table) => {
+    const fragmento = document.createDocumentFragment();
+    rows.forEach((row, indice) => fragmento.appendChild(construirFila(row, indice, rows, tbody, hiddenInput, table)));
+    tbody.replaceChildren(fragmento);
 
     applyRowFilter(rows, tbody);
 };
 
-const applyRowLockState = (row) => {
+const applyRowLockState = (row, elemento = null) => {
     const currentUser = getCurrentUser();
     const lockIsActive = row.bloqueado_hasta && new Date(row.bloqueado_hasta) > new Date();
     const lockedByOther = lockIsActive && String(row.bloqueado_por_id) !== String(currentUser.id);
     const lockOwnerName = lockedByOther ? row.bloqueado_por_nombre || 'otro usuario' : '';
-    setRowLockState(row.id, lockedByOther, lockOwnerName, row.bloqueado_por_id);
+    setRowLockState(row.id, lockedByOther, lockOwnerName, row.bloqueado_por_id, elemento);
 };
 
 const setupLockExpiryWatcher = (rows) => {
     if (window.__reclutamientoLockWatcher) window.clearInterval(window.__reclutamientoLockWatcher);
 
     window.__reclutamientoLockWatcher = window.setInterval(() => {
+        const ahora = new Date();
+        const bloqueadasEnPantalla = new Set([...document.querySelectorAll('tr[data-candidato-id][data-locked="true"]')].map((tr) => tr.dataset.candidatoId));
+
         rows.forEach((row) => {
-            if (isPersistedRow(row)) applyRowLockState(row);
+            if (!isPersistedRow(row)) return;
+
+            const bloqueoVigente = row.bloqueado_hasta && new Date(row.bloqueado_hasta) > ahora;
+            if (bloqueoVigente || bloqueadasEnPantalla.has(String(row.id))) applyRowLockState(row);
         });
     }, 5000);
 };
@@ -1578,6 +1664,7 @@ const importExcel = (rows, tbody, hiddenInput, table, event) => {
             renderTable(finalRows, tbody, hiddenInput, table);
             setupColumnResizing(table);
             syncHiddenInput(finalRows, hiddenInput);
+            window.__reclutamientoImportacion = finalRows;
             window.__reclutamientoDirty = true;
         } catch {
             // ignora archivos no válidos
@@ -1603,25 +1690,38 @@ const setupExpandedTable = () => {
     if (!expandButton || !closeButton || !modal || !modalBody || !gridHost || !gridContainer || !decreaseButton || !resetButton || !increaseButton) return;
     if (expandButton.dataset.bound === 'true') return;
 
+    // Mover la tabla entre contenedores obliga a calcular de nuevo el diseño de todas las filas; primero se muestra
+    // (u oculta) el cuadro y la tabla se mueve en el siguiente fotograma, para que la pantalla responda al instante.
     const openModal = () => {
-        modalBody.appendChild(gridContainer);
         modal.classList.remove('hidden');
         document.body.classList.add('overflow-hidden');
-        gridContainer.querySelector('input, select')?.focus();
+
+        window.requestAnimationFrame(() => {
+            modalBody.appendChild(gridContainer);
+            gridContainer.querySelector('input, select')?.focus({ preventScroll: true });
+        });
     };
 
     const closeModal = () => {
         updateZoom(1);
-        gridHost.appendChild(gridContainer);
         modal.classList.add('hidden');
         document.body.classList.remove('overflow-hidden');
+
+        window.requestAnimationFrame(() => gridHost.appendChild(gridContainer));
     };
 
+    // El zoom usa `transform: scale` (solo recompone la imagen, sin recalcular el diseño de cientos de filas, que
+    // era lo que hacía la propiedad `zoom`). La caja se agranda en sentido inverso para que el desplazamiento siga ajustado.
     let zoom = 1;
     const updateZoom = (nextZoom) => {
-        zoom = Math.min(1.5, Math.max(0.7, nextZoom));
+        zoom = Math.min(1.5, Math.max(0.7, Math.round(nextZoom * 10) / 10));
         const percentage = `${Math.round(zoom * 100)}%`;
-        gridContainer.style.zoom = zoom;
+        gridContainer.style.transformOrigin = '0 0';
+        gridContainer.style.transform = zoom === 1 ? '' : `scale(${zoom})`;
+        gridContainer.style.width = zoom === 1 ? '' : `${100 / zoom}%`;
+        gridContainer.style.height = zoom === 1 ? '' : `${100 / zoom}%`;
+        // La hoja de estilos limita el alto al 100% del cuadro (max-h-full); con zoom menor a 100% hay que levantar ese tope.
+        gridContainer.style.maxHeight = zoom === 1 ? '' : 'none';
         resetButton.textContent = percentage;
         decreaseButton.disabled = zoom <= 0.7;
         increaseButton.disabled = zoom >= 1.5;
@@ -1656,6 +1756,15 @@ const initializeGrid = () => {
         return;
     }
 
+    // Livewire dispara `livewire:navigated` también en la carga inicial, así que esta función corre dos veces sobre la
+    // misma tabla. Cada pasada creaba su propia copia de las filas y enlazaba otra vez los botones: un clic en "+" agregaba
+    // dos filas y la respuesta del servidor (con el número definitivo) solo llegaba a una, de modo que cada guardado
+    // siguiente creaba el candidato de nuevo. Se inicializa una sola vez por tabla.
+    if (table.dataset.reclutamientoListo === 'true') {
+        return;
+    }
+    table.dataset.reclutamientoListo = 'true';
+
     const rows = mountRowsFromStorage();
 
     window.__reclutamientoDirty = false;
@@ -1669,12 +1778,35 @@ const initializeGrid = () => {
     syncHiddenInput(rows, hiddenInput);
     initReclutamientoFiltros(rows, tbody);
 
+    // Un solo oyente para toda la tabla (antes cada celda tenía dos) y con retardo.
+    if (tbody.dataset.ajusteVinculado !== 'true') {
+        tbody.dataset.ajusteVinculado = 'true';
+        ['input', 'change'].forEach((evento) => tbody.addEventListener(evento, () => programarAjusteColumnas(table)));
+    }
+
+    // El botón Guardar manda solo lo importado o lo que sigue sin guardar (ya no viaja la tabla completa en cada petición).
+    const formulario = document.getElementById('reclutamiento-form');
+    if (formulario && formulario.dataset.vinculado !== 'true') {
+        formulario.dataset.vinculado = 'true';
+        formulario.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            const sucias = window.__reclutamientoDirtyRows || new Set();
+            const pendientes = window.__reclutamientoImportacion
+                ?? rows.filter((row) => !isPersistedRow(row) || sucias.has(String(row.id)));
+            window.__reclutamientoImportacion = null;
+
+            callLivewire('guardarBase', JSON.stringify(serializeRows(pendientes)));
+        });
+    }
+
     const addRow = () => {
         const newRow = normalizeRow();
         markRowDirty(newRow);
         rows.push(newRow);
-        renderTable(rows, tbody, hiddenInput, table);
-        setupColumnResizing(table);
+        tbody.appendChild(construirFila(newRow, rows.length - 1, rows, tbody, hiddenInput, table));
+        applyRowFilter(rows, tbody);
+        programarAjusteColumnas(table);
         syncHiddenInput(rows, hiddenInput);
         scheduleRowSave(newRow);
 
@@ -1739,12 +1871,21 @@ const initializeGrid = () => {
     window.__reclutamientoApplyChanges = (cambiadas = [], eliminadas = []) => {
         const dirtyIds = window.__reclutamientoDirtyRows || new Set();
         const indiceDe = (id) => rows.findIndex((row) => String(row.id) === String(id));
+        const filaEnPantalla = (id) => tbody.querySelector(`tr[data-candidato-id="${id}"]`);
+        const dibujar = (row, indice) => construirFila(row, indice, rows, tbody, hiddenInput, table);
+        let cambioElOrden = false;
 
         cambiadas.map((row) => normalizeRow(row)).forEach((remota) => {
             const indice = indiceDe(remota.id);
 
             if (indice >= 0) {
-                rows[indice] = dirtyIds.has(String(remota.id)) ? { ...remota, ...rows[indice] } : remota;
+                // Se actualiza el mismo objeto: los campos de la fila ya dibujada siguen apuntando a él.
+                const actual = rows[indice];
+                Object.assign(actual, dirtyIds.has(String(remota.id)) ? { ...remota, ...actual } : remota);
+
+                const tr = filaEnPantalla(remota.id);
+                // No se le quita el foco a quien está escribiendo en esa fila.
+                if (tr && !tr.contains(document.activeElement)) tr.replaceWith(dibujar(actual, indice));
                 return;
             }
 
@@ -1753,20 +1894,30 @@ const initializeGrid = () => {
             const indiceTemporal = identidad
                 ? rows.findIndex((row) => !isPersistedRow(row) && getRowIdentityKey(row) === identidad)
                 : -1;
-            if (indiceTemporal >= 0) rows.splice(indiceTemporal, 1);
+            if (indiceTemporal >= 0) {
+                filaEnPantalla(rows[indiceTemporal].id)?.remove();
+                rows.splice(indiceTemporal, 1);
+            }
 
             const primeraTemporal = rows.findIndex((row) => !isPersistedRow(row));
-            rows.splice(primeraTemporal >= 0 ? primeraTemporal : rows.length, 0, remota);
+            const destino = primeraTemporal >= 0 ? primeraTemporal : rows.length;
+            rows.splice(destino, 0, remota);
+            tbody.insertBefore(dibujar(remota, destino), tbody.rows[destino] ?? null);
+            cambioElOrden = true;
         });
 
         eliminadas.forEach((id) => {
             const indice = indiceDe(id);
-            if (indice >= 0 && !dirtyIds.has(String(id))) rows.splice(indice, 1);
+            if (indice >= 0 && !dirtyIds.has(String(id))) {
+                rows.splice(indice, 1);
+                filaEnPantalla(id)?.remove();
+                cambioElOrden = true;
+            }
         });
 
-        renderTable(rows, tbody, hiddenInput, table);
-        setupColumnResizing(table);
-        syncHiddenInput(rows, hiddenInput);
+        if (cambioElOrden) renumerarFilas(tbody);
+        applyRowFilter(rows, tbody);
+        programarAjusteColumnas(table);
         window.__reclutamientoDirty = window.__reclutamientoDirtyRows?.size > 0;
     };
 
@@ -1863,6 +2014,7 @@ const createCapacitacionFilterChip = (def, filtro, container, onChange, onRemove
             input.className = 'reclutamiento-filter-popover-search';
             input.value = filtro.texto || '';
             input.addEventListener('input', () => { filtro.texto = input.value; renderLabel(); onChange(); });
+            cerrarConEnter(input);
             popover.appendChild(input);
         } else if (def.type === 'range') {
             const desde = document.createElement('input');

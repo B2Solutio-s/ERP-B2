@@ -12,7 +12,11 @@ class AsistenciaSincronizador
     /** Descarga todas las marcaciones guardadas en el biométrico y guarda las nuevas. */
     public function sincronizarHistorial(): int
     {
+        // La librería escribe sus errores en vendor/ (carpeta inexistente → excepción confusa) y espera 60 s por paquete.
+        defined('ZK_LIB_LOG') || define('ZK_LIB_LOG', storage_path('logs/zkteco.log'));
+
         $zk = new ZKTeco(config('asistencia.biometrico.host'), config('asistencia.biometrico.port'));
+        socket_set_option($zk->_zkclient, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 10, 'usec' => 0]);
 
         if (! $zk->connect()) {
             throw new RuntimeException('No se pudo conectar al biométrico.');

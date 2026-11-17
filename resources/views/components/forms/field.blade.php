@@ -1,4 +1,4 @@
-@props(['label', 'name', 'type' => 'text', 'span' => false, 'live' => false, 'min' => null, 'max' => null, 'readonly' => false, 'hint' => null])
+@props(['label', 'name', 'type' => 'text', 'span' => false, 'live' => false, 'min' => null, 'max' => null, 'step' => null, 'readonly' => false, 'hint' => null])
 
 <div {{ $attributes->class(['sm:col-span-2' => $span]) }}>
     <label class="form-label">{{ $label }}</label>
@@ -9,6 +9,7 @@
         @readonly($readonly)
         @if (! is_null($min)) min="{{ $min }}" @endif
         @if (! is_null($max)) max="{{ $max }}" @endif
+        @if (! is_null($step)) step="{{ $step }}" @endif
     >
     @if ($readonly && $hint)
         <p class="mt-1 text-xs text-slate-400">{{ $hint }}</p>

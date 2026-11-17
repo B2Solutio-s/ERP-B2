@@ -33,25 +33,26 @@ class AsistenciaEscuchar extends Command
                 $cliente->conectar();
                 $this->info("Conectado a {$host}:{$port}");
 
-                if ($historialPendiente) {
-                    $nuevas = $sincronizador->sincronizarHistorial();
-                    $this->info("Historial sincronizado: {$nuevas} marcaciones nuevas.");
-                    $historialPendiente = false;
-                }
-
-                $ultimaSync = time();
+                // Si el historial no se puede bajar ahora, igual se escucha en vivo y se reintenta en 60 s.
+                $ultimaSync = $historialPendiente ? 0 : time();
 
                 $cliente->escuchar(
                     function (string $id, string $fecha, int $estado, int $tipo) use ($sincronizador, $cliente) {
                         $nueva = $sincronizador->registrar($id, $fecha, $estado, $tipo);
                         $this->line(now()->format('H:i:s')." marcación id={$id} {$fecha}".($nueva ? '' : ' (duplicada)')." raw={$cliente->ultimoCrudo}");
                     },
-                    function () use ($sincronizador, &$ultimaSync) {
+                    function () use ($sincronizador, &$ultimaSync, &$historialPendiente) {
                         // Respaldo: si algún evento en vivo se pierde, el historial lo recupera.
                         if (time() - $ultimaSync >= 60) {
                             $ultimaSync = time();
-                            if ($nuevas = $sincronizador->sincronizarHistorial()) {
-                                $this->info("Respaldo: {$nuevas} marcaciones recuperadas del historial.");
+                            try {
+                                $nuevas = $sincronizador->sincronizarHistorial();
+                                $historialPendiente = false;
+                                if ($nuevas) {
+                                    $this->info("Respaldo: {$nuevas} marcaciones recuperadas del historial.");
+                                }
+                            } catch (\Throwable $e) {
+                                $this->warn('Historial no disponible por ahora: '.$e->getMessage());
                             }
                         }
 

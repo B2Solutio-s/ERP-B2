@@ -1,6 +1,8 @@
 @props(['empleado'])
 
 @php
+    // GTH nunca ve remuneraciones ni pagos.
+    $verPago = auth()->user()?->esAdmin() ?? false;
     $chk = fn (?bool $activo) => $activo ? 'X' : '';
     $chkVal = fn (?string $valor, string $opcion) => $valor === $opcion ? 'X' : '';
     $fecha = fn ($valor) => $valor && (($valor instanceof \DateTimeInterface) || strtotime((string) $valor) !== false)
@@ -215,7 +217,9 @@
                     <th>Empresa</th>
                     <th>Cargo</th>
                     <th>Principal función</th>
-                    <th>Sueldo</th>
+                    @if ($verPago)
+                        <th>Sueldo</th>
+                    @endif
                     <th>Fec. inicio - térm.</th>
                     <th>Motivo de cese</th>
                 </tr>
@@ -225,7 +229,9 @@
                     <td>{{ $empleo->empresa ?: '-' }}</td>
                     <td>{{ $empleo->cargo ?: '-' }}</td>
                     <td>{{ $empleo->funcion_principal ?: '-' }}</td>
-                    <td>{{ $empleo->sueldo ?: '-' }}</td>
+                    @if ($verPago)
+                        <td>{{ $empleo->sueldo ?: '-' }}</td>
+                    @endif
                     <td>{{ $fecha($empleo->fecha_inicio) ?: '-' }} - {{ $fecha($empleo->fecha_termino) ?: '-' }}</td>
                     <td>{{ $empleo->motivo_cese ?: '-' }}</td>
                 </tr>

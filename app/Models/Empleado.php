@@ -113,4 +113,32 @@ class Empleado extends Model
     {
         return $this->hasMany(EmpleadoPeriodoContrato::class)->latest('fecha_inicio');
     }
+
+    public function usuario()
+    {
+        return $this->hasOne(User::class);
+    }
+
+    public function nombreCompleto(): string
+    {
+        return trim("{$this->apellido_paterno} {$this->apellido_materno}, {$this->nombres}");
+    }
+
+    /** Contrato vigente: el último período no está cesado ni vencido (activo o por vencer). */
+    public function tieneContratoVigente(): bool
+    {
+        $ultimo = $this->periodosContrato->first();
+
+        return $ultimo !== null && in_array($ultimo->estado(), ['activo', 'por_vencer'], true);
+    }
+
+    /** Trabajadores con contrato vigente, ordenados por apellido. */
+    public static function conContratoVigente(): \Illuminate\Support\Collection
+    {
+        return static::with('periodosContrato')
+            ->orderBy('apellido_paterno')->orderBy('apellido_materno')->orderBy('nombres')
+            ->get()
+            ->filter(fn (self $e) => $e->tieneContratoVigente())
+            ->values();
+    }
 }

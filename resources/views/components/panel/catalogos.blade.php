@@ -9,7 +9,7 @@ use Illuminate\Validation\Rule;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
-new #[Layout('layouts.panel')] class extends Component
+new #[Layout('layouts.panel', ['title' => 'Catálogos'])] class extends Component
 {
     public ?int $areaSeleccionadaId = null;
 

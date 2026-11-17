@@ -13,11 +13,13 @@ use App\Services\EnvioInvitacionFicha;
 use App\Services\QrCodeGenerator;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Carbon;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Renderless;
 use Livewire\Component;
 
-new #[Layout('layouts.panel')] class extends Component
+new #[Layout('layouts.panel', ['title' => 'Proceso de reclutamiento'])] class extends Component
 {
     public array $modulos = [
         'candidatos' => 'Gestión de candidatos',
@@ -26,7 +28,6 @@ new #[Layout('layouts.panel')] class extends Component
 
     public string $moduloActivo = 'candidatos';
 
-    public string $rowsJson = '[]';
     public array $areas = [];
     public array $areasConfig = [];
     public array $puestosPorArea = [];
@@ -46,17 +47,18 @@ new #[Layout('layouts.panel')] class extends Component
     ];
 
     public const SUBTIPIFICACION_OPTIONS = [
-        'NO CONTESTA',
-        'NO TIENE EXPERIENCIA',
-        'NO CALIFICA',
-        'DISTANCIA',
-        'PENDIENTE DE LLAMADA',
         'SUELDO',
-        'REFERIDO',
-        'MALCRIADA',
-        'LOGISTICA',
-        'TRABAJANDO',
-        'OTROS',
+        'DISTANCIA',
+        'TRABAJA REMOTO',
+        'HORARIOS DE ESTUDIO',
+        'NO DA MOTIVOS',
+        'DESEA OTRA POSICIÓN',
+        'YA SE ENCUENTRA LABORANDO',
+        'CORTA LA LLAMADA',
+        'NO POSEE EXPERIENCIA',
+        'EXTRANJERO',
+        'FALTA DE RESPETO',
+        'TERCERA EDAD',
     ];
 
     public const ASISTIO_OPTIONS = [
@@ -102,7 +104,6 @@ new #[Layout('layouts.panel')] class extends Component
     public function mount(): void
     {
         abort_unless(Auth::user()->esGth() || Auth::user()->esAdmin(), 403);
-        $this->rowsJson = $this->encodeRows();
 
         $areas = Area::query()->orderBy('nombre')->get();
 
@@ -228,6 +229,7 @@ new #[Layout('layouts.panel')] class extends Component
         return $payload;
     }
 
+    #[Renderless]
     public function guardarFila(array $fila): void
     {
         if ($this->filaVacia($fila)) {
@@ -250,6 +252,16 @@ new #[Layout('layouts.panel')] class extends Component
         // Fila ya eliminada por otra persona: no se vuelve a crear.
         if (! $candidato && ! empty($fila['id']) && ctype_digit((string) $fila['id'])) {
             return;
+        }
+
+        // Una fila nueva se identifica con un número provisional hasta que el servidor responde. Si llegan dos guardados
+        // con el mismo número provisional (respuesta aún en camino, doble clic…), el segundo actualiza el candidato ya
+        // creado en vez de crear otro.
+        $idProvisional = (! empty($fila['id']) && ! ctype_digit((string) $fila['id'])) ? (string) $fila['id'] : null;
+        $claveProvisional = $idProvisional ? 'reclutamiento.fila-provisional.'.Auth::id().'.'.md5($idProvisional) : null;
+
+        if (! $candidato && $claveProvisional && ($idCreado = Cache::get($claveProvisional))) {
+            $candidato = CandidatoReclutamiento::with('bloqueadoPor')->find($idCreado);
         }
 
         if (! $candidato && (! empty($payload['dni_ce']) || ! empty($payload['nombres']) || ! empty($payload['apellidos']))) {
@@ -281,6 +293,10 @@ new #[Layout('layouts.panel')] class extends Component
             $candidato = CandidatoReclutamiento::create($payload);
         }
 
+        if ($claveProvisional) {
+            Cache::put($claveProvisional, $candidato->id, now()->addHours(2));
+        }
+
         $this->dispatch('fila-guardada', tempId: $fila['id'] ?? null, id: $candidato->id);
 
         broadcast(new ReclutamientoActualizado(
@@ -292,6 +308,7 @@ new #[Layout('layouts.panel')] class extends Component
         ));
     }
 
+    #[Renderless]
     public function bloquearFila(int $id): void
     {
         $candidato = CandidatoReclutamiento::with('bloqueadoPor')->find($id);
@@ -334,6 +351,7 @@ new #[Layout('layouts.panel')] class extends Component
         );
     }
 
+    #[Renderless]
     public function eliminarFila(int $id): void
     {
         $candidato = CandidatoReclutamiento::find($id);
@@ -368,9 +386,11 @@ new #[Layout('layouts.panel')] class extends Component
         ))->toOthers();
     }
 
-    public function guardarBase(): void
+    /** Guarda las filas que manda la grilla (importación de Excel / botón Guardar). */
+    #[Renderless]
+    public function guardarBase(string $json = '[]'): void
     {
-        $data = json_decode($this->rowsJson, true) ?: [];
+        $data = json_decode($json, true) ?: [];
 
         foreach ($data as $fila) {
             if ($this->filaVacia($fila)) {
@@ -423,8 +443,6 @@ new #[Layout('layouts.panel')] class extends Component
 
             CandidatoReclutamiento::create($payload);
         }
-
-        $this->rowsJson = $this->encodeRows();
 
         broadcast(new ReclutamientoActualizado(
             tipo: 'tabla-actualizada',
@@ -531,7 +549,7 @@ new #[Layout('layouts.panel')] class extends Component
         return null;
     }
 
-    protected function encodeRows(): string
+    public function encodeRows(): string
     {
         return json_encode(
             $this->filasActuales(),
@@ -556,9 +574,13 @@ new #[Layout('layouts.panel')] class extends Component
             })
             ->filter(function ($candidato) {
                 if ($this->capacitacionBuscarNombre !== '') {
-                    $termino = mb_strtolower($this->capacitacionBuscarNombre);
-                    if (! str_contains(mb_strtolower($candidato->nombreCompleto()), $termino)) {
-                        return false;
+                    // Todas las palabras escritas, sin importar tildes, mayúsculas ni el orden (nombres/apellidos).
+                    $normalizar = fn (string $texto) => \Illuminate\Support\Str::ascii(mb_strtolower($texto));
+                    $nombre = $normalizar($candidato->nombreCompleto());
+                    foreach (array_filter(preg_split('/\s+/u', $normalizar(trim($this->capacitacionBuscarNombre)))) as $palabra) {
+                        if (! str_contains($nombre, $palabra)) {
+                            return false;
+                        }
                     }
                 }
 
@@ -1006,9 +1028,9 @@ new #[Layout('layouts.panel')] class extends Component
 
         <div id="reclutamiento-filtros" wire:ignore class="reclutamiento-filter-bar mb-4"></div>
 
-        <form id="reclutamiento-form" wire:submit.prevent="guardarBase" class="space-y-4">
-            <input type="hidden" id="rowsJson" name="rowsJson" value="{{ $rowsJson }}">
-            <script type="application/json" id="reclutamiento-grid-data">{!! $rowsJson !!}</script>
+        <form id="reclutamiento-form" onsubmit="return false" class="space-y-4">
+            <input type="hidden" id="rowsJson" name="rowsJson" value="">
+            <script type="application/json" id="reclutamiento-grid-data">{!! $this->encodeRows() !!}</script>
             <script type="application/json" id="reclutamiento-areas">@json($areas)</script>
             <script type="application/json" id="reclutamiento-areas-config">@json($areasConfig)</script>
             <script type="application/json" id="reclutamiento-puestos-por-area">@json($puestosPorArea)</script>

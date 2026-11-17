@@ -18,6 +18,8 @@ class ZkLiveClient
     private const CMD_ACK_OK = 2000;
     private const CMD_ACK_UNAUTH = 2005;
     private const EF_ATTLOG = 1;
+    /** Segundos sin ningún paquete (ni la respuesta al pulso) para dar la conexión por caída. */
+    private const SIN_RESPUESTA_MAX = 90;
     private const MAGIC = "\x50\x50\x82\x7d";
 
     /** @var resource|null */
@@ -77,7 +79,7 @@ class ZkLiveClient
      */
     public function escuchar(callable $alMarcar, callable $continuar): void
     {
-        $ultimoPulso = time();
+        $ultimoPulso = $ultimoPaquete = time();
 
         while ($continuar()) {
             $paquete = $this->leerPaquete();
@@ -87,6 +89,11 @@ class ZkLiveClient
                     throw new RuntimeException('El biométrico cerró la conexión.');
                 }
 
+                // Una conexión caída sin aviso (corte de red) no da error: se detecta porque ni el pulso responde.
+                if (time() - $ultimoPaquete >= self::SIN_RESPUESTA_MAX) {
+                    throw new RuntimeException('El biométrico dejó de responder.');
+                }
+
                 if (time() - $ultimoPulso >= 30) {
                     $this->enviar(self::CMD_GET_TIME);
                     $ultimoPulso = time();
@@ -94,6 +101,8 @@ class ZkLiveClient
 
                 continue;
             }
+
+            $ultimoPaquete = time();
 
             if ($paquete['cmd'] !== self::CMD_REG_EVENT || $paquete['data'] === '') {
                 continue;

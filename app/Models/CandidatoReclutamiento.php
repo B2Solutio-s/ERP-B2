@@ -2,8 +2,11 @@
 
 namespace App\Models;
 
+use App\Observers\CandidatoReclutamientoObserver;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Model;
 
+#[ObservedBy(CandidatoReclutamientoObserver::class)]
 class CandidatoReclutamiento extends Model
 {
     protected $table = 'reclutamiento_candidatos';
@@ -18,6 +21,7 @@ class CandidatoReclutamiento extends Model
         'capacitacion_2',
         'capacitacion_2_reprogramada',
         'fecha_ingreso',
+        'volver_a_llamar_fecha',
     ];
 
     protected $fillable = [
@@ -75,6 +79,10 @@ class CandidatoReclutamiento extends Model
         'periodos_iniciales',
         'bloqueado_por_id',
         'bloqueado_hasta',
+        'intentos_contacto',
+        'ultimo_contacto_at',
+        'volver_a_llamar_fecha',
+        'volver_a_llamar_hora',
     ];
 
     protected $casts = [
@@ -91,6 +99,8 @@ class CandidatoReclutamiento extends Model
         'periodos_iniciales' => 'array',
         'fecha_apto' => 'datetime',
         'bloqueado_hasta' => 'datetime',
+        'ultimo_contacto_at' => 'datetime',
+        'volver_a_llamar_fecha' => 'date',
     ];
 
     public function setAttribute($key, $value)
@@ -139,6 +149,59 @@ class CandidatoReclutamiento extends Model
         return null;
     }
 
+    /**
+     * Situación de quien todavía no está marcado apto, según el último resultado registrado (de la capacitación 2 hacia atrás).
+     * Es definitiva cuando no asistió (NO) o asistió y fue «SI, NO APTO»: quien no asiste debe quedar REPROGRAMADO para seguir en el proceso.
+     *
+     * @return array{definitivo: bool, motivo: string}|null  null si ya es apto
+     */
+    public function situacionSinApto(): ?array
+    {
+        if ($this->apto) {
+            return null;
+        }
+
+        $etapas = [
+            'Capacitación 2' => [$this->asistio_cap_2, $this->asistio_cap_2_reprogramada],
+            'Capacitación 1' => [$this->asistio_cap_1, $this->asistio_cap_1_reprogramada],
+            'Entrevista' => [$this->asistio_entrevista, $this->asistio_entrevista_reprogramada],
+        ];
+
+        foreach ($etapas as $etapa => [$original, $reprogramada]) {
+            $original = mb_strtoupper(trim((string) $original));
+            $reprogramada = mb_strtoupper(trim((string) $reprogramada));
+
+            if ($original === 'REPROGRAMADO') {
+                if ($reprogramada === '') {
+                    return ['definitivo' => false, 'motivo' => $etapa.': reprogramada, aún sin resultado'];
+                }
+
+                $etapa .= ' (reprogramada)';
+                $resultado = $reprogramada;
+            } else {
+                $resultado = $original;
+            }
+
+            if ($resultado === '') {
+                continue;
+            }
+
+            return match (true) {
+                str_contains($resultado, 'NO APTO') => ['definitivo' => true, 'motivo' => $etapa.': asistió, no apto'],
+                str_starts_with($resultado, 'SI') => ['definitivo' => false, 'motivo' => $etapa.': asistió, pero falta completar el proceso y marcar apto'],
+                $resultado === 'NO' => ['definitivo' => true, 'motivo' => $etapa.': no asistió'],
+                default => ['definitivo' => false, 'motivo' => $etapa.': '.mb_strtolower($resultado)],
+            };
+        }
+
+        return ['definitivo' => false, 'motivo' => 'Sin avance registrado en el proceso'];
+    }
+
+    public function motivoSinApto(): ?string
+    {
+        return $this->situacionSinApto()['motivo'] ?? null;
+    }
+
     public function noAptoEnCapacitacion(): bool
     {
         return $this->detalleNoAptoCapacitacion() !== null;
@@ -172,6 +235,11 @@ class CandidatoReclutamiento extends Model
         }
 
         return null;
+    }
+
+    public function eventos()
+    {
+        return $this->hasMany(CandidatoEvento::class, 'reclutamiento_candidato_id');
     }
 
     public function bloqueadoPor()
