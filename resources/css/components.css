@@ -147,6 +147,27 @@
 
     .sidebar-item-active {
         @apply bg-sidebar-active text-white;
+        box-shadow: inset 3px 0 0 var(--color-primary);
+    }
+
+    .sidebar-pie {
+        @apply mt-auto space-y-1 border-t border-white/10 px-3 py-3;
+    }
+
+    .sidebar-collapsed .sidebar-pie {
+        @apply px-2;
+    }
+
+    .avatar-foto {
+        @apply h-9 w-9 rounded-full object-cover;
+    }
+
+    .perfil-color {
+        @apply relative flex h-10 w-10 items-center justify-center rounded-full ring-2 ring-transparent ring-offset-2 transition hover:scale-105;
+    }
+
+    .perfil-color-activo {
+        @apply ring-slate-700;
     }
 
     .stat-tile {

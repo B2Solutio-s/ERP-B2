@@ -4,6 +4,7 @@ use App\Models\AsistenciaDescuento;
 use App\Models\CandidatoDocumento;
 use App\Models\EmpleadoDocumentoCese;
 use App\Models\EmpleadoDocumentoContrato;
+use App\Models\User;
 use App\Models\Vacacion;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -29,13 +30,20 @@ Route::post('/logout', function () {
     return redirect()->route('login');
 })->middleware('auth')->name('logout');
 
+Route::livewire('/panel/perfil', 'panel.perfil')->name('perfil')->middleware('auth');
+
+Route::get('/perfil/foto/{usuario}', function (User $usuario) {
+    abort_unless(Auth::id() === $usuario->id || Auth::user()->esAdmin(), 403);
+    abort_unless($usuario->tieneFoto() && Storage::disk('local')->exists($usuario->foto_ruta), 404);
+
+    return Storage::disk('local')->response($usuario->foto_ruta, 'perfil.jpg', ['Cache-Control' => 'private, max-age=86400', 'X-Content-Type-Options' => 'nosniff']);
+})->name('perfil.foto')->middleware('auth');
+
 Route::livewire('/panel/control-gth', 'panel.control-gth')->name('control-gth')->middleware('auth');
 
 Route::livewire('/panel/control-ingresos', 'panel.control-ingresos')->name('control-ingresos')->middleware('auth');
 
 Route::livewire('/panel/gestion-candidatos', 'panel.gestion-candidatos')->name('gestion-candidatos')->middleware('auth');
-
-Route::livewire('/panel/proceso-reclutamiento','panel.proceso-reclutamiento')->name('proceso-reclutamiento')->middleware('auth');
 
 Route::livewire('/panel/catalogos', 'panel.catalogos')->name('catalogos')->middleware('auth');
 

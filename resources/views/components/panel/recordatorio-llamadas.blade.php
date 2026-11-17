@@ -4,16 +4,24 @@ use App\Models\CandidatoReclutamiento;
 use App\Services\GestionCandidatos;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Livewire\Component;
 
 new class extends Component
 {
     private const ZONA = 'America/Lima';
 
-    /** Mientras el módulo de candidatos es solo de administración, el aviso es solo para el Admin. */
+    /** Admin y GTH, que son quienes usan el módulo de candidatos. */
     public function aplica(): bool
     {
-        return (bool) Auth::user()?->esAdmin();
+        $usuario = Auth::user();
+
+        return $usuario && ($usuario->esAdmin() || $usuario->esGth());
+    }
+
+    private function sinTildes(?string $texto): string
+    {
+        return Str::upper(Str::ascii(trim((string) $texto)));
     }
 
     /**
@@ -36,6 +44,10 @@ new class extends Component
             ->whereDate('volver_a_llamar_fecha', '<=', $hoy)
             ->where(fn ($q) => $q->whereNull('apto')->orWhere('apto', false))
             ->get()
+            // El Admin ve todas; cada GTH, las de sus candidatos y las que no tienen reclutador.
+            ->filter(fn (CandidatoReclutamiento $c) => Auth::user()->esAdmin()
+                || blank($c->agente_reclutador)
+                || $this->sinTildes($c->agente_reclutador) === $this->sinTildes(Auth::user()->name))
             ->map(function (CandidatoReclutamiento $c) use ($ahora, $hoy) {
                 $fecha = $c->volver_a_llamar_fecha->toDateString();
                 $hora = preg_match('/^(\d{1,2}):(\d{2})/', (string) $c->volver_a_llamar_hora, $m) ? sprintf('%02d:%02d', $m[1], $m[2]) : null;

@@ -42,6 +42,50 @@ class User extends Authenticatable
         ];
     }
 
+    /** Color de tema por defecto y colores sugeridos en el perfil (nombre => #rrggbb). */
+    public const TEMA_DEFECTO = '#4e73f8';
+
+    public const TEMAS = [
+        'Azul' => '#4e73f8',
+        'Índigo' => '#6366f1',
+        'Violeta' => '#8b5cf6',
+        'Rosa' => '#db2777',
+        'Rojo' => '#e11d48',
+        'Naranja' => '#ea580c',
+        'Verde' => '#16a34a',
+        'Turquesa' => '#0d9488',
+        'Cian' => '#0891b2',
+        'Grafito' => '#475569',
+    ];
+
+    public static function colorValido(?string $color): bool
+    {
+        return is_string($color) && (bool) preg_match('/^#[0-9a-fA-F]{6}$/', $color);
+    }
+
+    /** Color de tema del usuario (siempre un #rrggbb válido). */
+    public function temaColor(): string
+    {
+        return self::colorValido($this->tema_color) ? strtolower($this->tema_color) : self::TEMA_DEFECTO;
+    }
+
+    /** Variables CSS del tema del usuario: el color principal y el color del texto que va encima (claro u oscuro según el contraste). */
+    public function temaCss(): string
+    {
+        $color = $this->temaColor();
+        [$r, $g, $b] = array_map(fn ($c) => ($c /= 255) <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4, sscanf($color, '#%02x%02x%02x'));
+        $luminancia = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b;
+        // Texto blanco salvo que el color sea tan claro que no se lea (contraste menor a 3:1), como un amarillo.
+        $texto = (1.05 / ($luminancia + 0.05)) >= 3.0 ? '#ffffff' : '#1f2937';
+
+        return ":root{--color-primary:{$color};--color-primary-content:{$texto};}";
+    }
+
+    public function tieneFoto(): bool
+    {
+        return filled($this->foto_ruta);
+    }
+
     public function esAdmin(): bool
     {
         return $this->role === self::ROL_ADMIN;
@@ -65,7 +109,7 @@ class User extends Authenticatable
     /** Ruta inicial según el rol (MKT no tiene acceso a los módulos de RRHH). */
     public function rutaInicial(): string
     {
-        return $this->esMkt() ? 'resultados-campana' : 'proceso-reclutamiento';
+        return $this->esMkt() ? 'resultados-campana' : 'gestion-candidatos';
     }
 
     public function empleado()

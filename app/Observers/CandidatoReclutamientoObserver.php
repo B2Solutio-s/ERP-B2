@@ -18,6 +18,10 @@ class CandidatoReclutamientoObserver
         'nombres' => 'Nombres',
         'apellidos' => 'Apellidos',
         'numero_celular' => 'Celular / usuario',
+        'edad' => 'Edad',
+        'distrito' => 'Distrito',
+        'observaciones' => 'Observaciones',
+        'fecha_gestion' => 'Fecha de gestión',
         'agente_reclutador' => 'Agente reclutador',
         'area' => 'Área',
         'puesto' => 'Puesto',
@@ -44,6 +48,12 @@ class CandidatoReclutamientoObserver
         'apto' => 'Apto',
         'fecha_ingreso' => 'Fecha de ingreso',
     ];
+
+    /**
+     * Minutos dentro de los que varias ediciones seguidas del mismo dato por la misma persona (la grilla guarda
+     * mientras se escribe) se unen en una sola línea del historial.
+     */
+    public const MINUTOS_UNIR = 2;
 
     /** Texto que acompaña al alta (p. ej. «Registro masivo»). */
     public static ?string $origen = null;
@@ -77,15 +87,43 @@ class CandidatoReclutamientoObserver
                 continue;
             }
 
+            $this->registrarCambio($candidato->id, $campo, $antes, $despues);
+        }
+    }
+
+    /** Registra el cambio o, si es la continuación de una edición reciente del mismo dato, la une a esa línea. */
+    private function registrarCambio(int $candidatoId, string $campo, ?string $antes, ?string $despues): void
+    {
+        $reciente = CandidatoEvento::query()
+            ->where('reclutamiento_candidato_id', $candidatoId)
+            ->where('tipo', 'cambio')
+            ->where('campo', $campo)
+            ->where('user_id', Auth::id())
+            ->where('updated_at', '>=', now()->subMinutes(self::MINUTOS_UNIR))
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $reciente) {
             CandidatoEvento::create([
-                'reclutamiento_candidato_id' => $candidato->id,
+                'reclutamiento_candidato_id' => $candidatoId,
                 'user_id' => Auth::id(),
                 'tipo' => 'cambio',
                 'campo' => $campo,
                 'valor_anterior' => $antes,
                 'valor_nuevo' => $despues,
             ]);
+
+            return;
         }
+
+        // Si la persona terminó dejando el dato como estaba, no hubo cambio que contar.
+        if ($reciente->valor_anterior === $despues) {
+            $reciente->delete();
+
+            return;
+        }
+
+        $reciente->forceFill(['valor_nuevo' => $despues, 'created_at' => now()])->save();
     }
 
     private function texto(string $campo, mixed $valor): ?string

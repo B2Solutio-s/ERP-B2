@@ -8,6 +8,9 @@
 
         @vite(['resources/css/app.css', 'resources/js/app.js'])
 
+        {{-- Color de tema del usuario (solo valores #rrggbb validados). --}}
+        <style>{!! auth()->user()->temaCss() !!}</style>
+
         <script>try { if (localStorage.getItem('sidebar-collapsed') === '1') document.documentElement.classList.add('sidebar-collapsed'); } catch (e) {}</script>
 
         @livewireStyles
@@ -39,21 +42,12 @@
                         </a>
                     @endif
 
-                    @if (auth()->user()->esAdmin())
+                    @if (auth()->user()->esAdmin() || auth()->user()->esGth())
                         <a href="{{ route('gestion-candidatos') }}" title="Gestión de candidatos" class="sidebar-item {{ request()->routeIs('gestion-candidatos') ? 'sidebar-item-active' : '' }}">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
                             </svg>
                             <span class="sidebar-label">Gestión de candidatos</span>
-                        </a>
-                    @endif
-
-                    @if (auth()->user()->esGth() || auth()->user()->esAdmin())
-                        <a href="{{ route('proceso-reclutamiento') }}" title="Proceso de reclutamiento" class="sidebar-item {{ request()->routeIs('proceso-reclutamiento') ? 'sidebar-item-active' : '' }}">
-                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zM12.75 11.25h.01M6.75 8.25h5.25m-5.25 4.5h9m-9 4.5h9M4.5 4.5h15a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18V6a1.5 1.5 0 011.5-1.5z" />
-                            </svg>
-                            <span class="sidebar-label">Proceso de reclutamiento</span>
                         </a>
                     @endif
 
@@ -112,6 +106,15 @@
                         </a>
                     @endif
                 </nav>
+
+                <div class="sidebar-pie">
+                    <a href="{{ route('perfil') }}" title="Perfil" class="sidebar-item {{ request()->routeIs('perfil') ? 'sidebar-item-active' : '' }}">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                        </svg>
+                        <span class="sidebar-label">Perfil</span>
+                    </a>
+                </div>
             </aside>
 
             <div class="flex flex-1 flex-col overflow-hidden">
@@ -127,7 +130,11 @@
 
                     <div class="flex items-center gap-4">
                         <div class="flex items-center gap-3">
-                            <span class="avatar">{{ strtoupper(substr(auth()->user()->name, 0, 1)) }}</span>
+                            @if (auth()->user()->tieneFoto())
+                                <img src="{{ route('perfil.foto', ['usuario' => auth()->id(), 'v' => auth()->user()->updated_at?->timestamp]) }}" alt="Foto de {{ auth()->user()->name }}" class="avatar-foto">
+                            @else
+                                <span class="avatar">{{ strtoupper(substr(auth()->user()->name, 0, 1)) }}</span>
+                            @endif
                             <span class="text-sm text-slate-500">{{ auth()->user()->name }}</span>
                         </div>
                         <form method="POST" action="{{ route('logout') }}">
@@ -149,7 +156,7 @@
             <livewire:panel.recordatorio-entrevistas />
         @endif
 
-        @if (auth()->user()->esAdmin())
+        @if (auth()->user()->esAdmin() || auth()->user()->esGth())
             <livewire:panel.recordatorio-llamadas />
         @endif
 

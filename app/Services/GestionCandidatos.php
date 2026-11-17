@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Events\ReclutamientoActualizado;
 use App\Models\Area;
 use App\Models\Campana;
 use App\Models\CandidatoEvento;
@@ -18,9 +17,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Reglas de la gestión de candidatos (las mismas de la grilla de «Proceso de reclutamiento») para el módulo de registros:
- * normalización de datos, dependencias Área → Puesto/Campaña/Cargo, entrevista, duplicados, bloqueo de edición,
- * candidatos que ya pasaron a capacitación y sincronización en vivo con la grilla.
+ * Reglas de la gestión de candidatos para el módulo de registros: normalización de datos, dependencias
+ * Área → Puesto/Campaña/Cargo, entrevista, duplicados, bloqueo de edición, llamadas, historial y registro masivo.
  */
 class GestionCandidatos
 {
@@ -356,8 +354,6 @@ class GestionCandidatos
         } finally {
             CandidatoReclutamientoObserver::$omitir = $omitidos;
         }
-
-        $this->difundir($c);
 
         return [];
     }
@@ -727,16 +723,6 @@ class GestionCandidatos
             CandidatoReclutamientoObserver::$origen = null;
         }
 
-        if ($creados) {
-            $this->emitir(new ReclutamientoActualizado(
-                tipo: 'tabla-actualizada',
-                filaId: null,
-                usuarioId: Auth::id(),
-                usuarioNombre: Auth::user()->name,
-                filas: array_map(fn ($c) => $this->fila($c->fresh('bloqueadoPor')), $creados),
-            ));
-        }
-
         return ['creados' => count($creados), 'omitidos' => count($filas) - count($creados)];
     }
 
@@ -757,7 +743,6 @@ class GestionCandidatos
     public function tomarBloqueo(CandidatoReclutamiento $c): void
     {
         $c->update(['bloqueado_por_id' => Auth::id(), 'bloqueado_hasta' => now()->addMinute()]);
-        $this->difundir($c, 'fila-bloqueada', true);
     }
 
     public function renovarBloqueo(int $id): void
@@ -775,7 +760,6 @@ class GestionCandidatos
 
         if ($c && $c->bloqueado_por_id === Auth::id()) {
             $c->update(['bloqueado_por_id' => null, 'bloqueado_hasta' => null]);
-            $this->difundir($c);
         }
     }
 
@@ -840,8 +824,6 @@ class GestionCandidatos
             });
         }
 
-        $this->difundir($candidato);
-
         return ['id' => $candidato->id];
     }
 
@@ -859,79 +841,7 @@ class GestionCandidatos
 
         $c->delete();
 
-        $this->emitir(new ReclutamientoActualizado(
-            tipo: 'tabla-actualizada',
-            filaId: $id,
-            usuarioId: Auth::id(),
-            usuarioNombre: Auth::user()->name,
-            eliminadas: [$id],
-        ));
-
         return null;
-    }
-
-    // ---------------------------------------------------------------
-    // Sincronización en vivo con la grilla
-    // ---------------------------------------------------------------
-
-    /** Una fila tal como la entiende la grilla (lo que viaja por Reverb). */
-    public function fila(CandidatoReclutamiento $c): array
-    {
-        return [
-            'id' => $c->id,
-            'mes' => $c->mes,
-            'fecha_gestion' => $c->fecha_gestion?->format('Y-m-d'),
-            'agente_reclutador' => $c->agente_reclutador,
-            'area' => $c->area,
-            'puesto' => $c->puesto,
-            'campana' => $c->campana,
-            'cargo' => $c->cargo,
-            'dni_ce' => $c->dni_ce,
-            'edad' => $c->edad,
-            'nombres' => $c->nombres,
-            'apellidos' => $c->apellidos,
-            'numero_celular' => $c->numero_celular,
-            'distrito' => $c->distrito,
-            'observaciones' => $c->observaciones,
-            'tipificacion' => $c->tipificacion,
-            'subtipificacion_rechazo' => $c->subtipificacion_rechazo,
-            'aceptacion_entrevista' => $c->aceptacion_entrevista,
-            'fecha_entrevista' => $c->fecha_entrevista?->format('Y-m-d'),
-            'hora_entrevista' => $c->hora_entrevista,
-            'asistio_entrevista' => $c->asistio_entrevista,
-            'fecha_reprogramada' => $c->fecha_reprogramada?->format('Y-m-d'),
-            'asistio_entrevista_reprogramada' => $c->asistio_entrevista_reprogramada,
-            'bloqueado_por_id' => $c->bloqueado_por_id,
-            'bloqueado_por_nombre' => $c->bloqueadoPor?->name,
-            'bloqueado_hasta' => $c->bloqueado_hasta?->toIso8601String(),
-            'graduado' => $this->graduado($c),
-            'no_apto_capacitacion' => $c->noAptoEnCapacitacion(),
-            'no_apto_detalle' => $c->detalleNoAptoCapacitacion(),
-        ];
-    }
-
-    private function difundir(CandidatoReclutamiento $c, string $tipo = 'tabla-actualizada', bool $bloqueada = false): void
-    {
-        $c = $c->fresh('bloqueadoPor');
-
-        $this->emitir(new ReclutamientoActualizado(
-            tipo: $tipo,
-            filaId: $c->id,
-            usuarioId: Auth::id(),
-            usuarioNombre: Auth::user()->name,
-            bloqueada: $bloqueada,
-            filas: $tipo === 'tabla-actualizada' ? [$this->fila($c)] : [],
-        ));
-    }
-
-    /** Si el servidor en vivo no responde, el guardado no se pierde: solo se omite el aviso a las demás pantallas. */
-    private function emitir(ReclutamientoActualizado $evento): void
-    {
-        try {
-            broadcast($evento);
-        } catch (\Throwable $e) {
-            report($e);
-        }
     }
 
     // ---------------------------------------------------------------
@@ -999,12 +909,14 @@ class GestionCandidatos
     /**
      * Siguiente paso del candidato: texto, tono de la insignia, detalle y orden de prioridad (menor = más urgente).
      *
-     * @return array{texto: string, tono: string, detalle: string, orden: int}
+     * Con «orden» menor a 2 el candidato requiere acción (entrevista de hoy o vencida, resultado pendiente, llamada vencida o sin tipificar).
+     *
+     * @return array{texto: string, tono: string, detalle: string, orden: int|float}
      */
     public function accion(CandidatoReclutamiento $c): array
     {
         $hoy = Carbon::now('America/Lima')->toDateString();
-        $accion = fn (string $texto, string $tono, string $detalle, int $orden) => compact('texto', 'tono', 'detalle', 'orden');
+        $accion = fn (string $texto, string $tono, string $detalle, int|float $orden) => compact('texto', 'tono', 'detalle', 'orden');
 
         if ($c->apto) {
             return $accion('Apto', 'green', 'Ya puede continuar con su ficha de ingreso', 9);
@@ -1054,7 +966,8 @@ class GestionCandidatos
             $c->aceptacion_entrevista === 'NO' => $accion('No aceptó entrevista', 'slate', (string) $c->tipificacion, 5),
             $c->tipificacion === 'INTERESADO - APTO' => $accion('Agendar entrevista', 'blue', 'Interesado: falta que acepte la entrevista', 2),
             in_array($c->tipificacion, self::VOLVER_A_LLAMAR, true) => $this->accionLlamada($c, $hoy),
-            default => $accion('Sin tipificar', 'slate', 'Aún no se registró la llamada', 6),
+            // Un registro no puede quedar sin gestión: sin tipificar cuenta como pendiente de acción.
+            default => $accion('Sin tipificar', 'amber', 'Falta registrar la primera llamada', 1.5),
         };
     }
 }

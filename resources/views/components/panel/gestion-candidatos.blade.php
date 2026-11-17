@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Renderless;
+use Livewire\Attributes\Session;
 use Livewire\Component;
 
 new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class extends Component
@@ -26,9 +27,16 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
     /** Día de gestión elegido (Y-m-d) y orden de la lista: 'fecha' (por fecha de registro) o 'prioridad' (por siguiente acción). */
     public string $filtroDia = '';
 
+    /** Tipificación elegida: '' (todas), 'SIN TIPIFICAR' o una tipificación. */
+    public string $filtroTipificacion = '';
+
     public string $orden = 'fecha';
 
     public int $limite = 20;
+
+    /** Bloque «Requieren acción» desplegado; se recuerda la elección durante la sesión. */
+    #[Session]
+    public bool $atencionAbierta = true;
 
     /** Registro abierto en el panel lateral. */
     public bool $abierto = false;
@@ -69,7 +77,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
 
     public function mount(): void
     {
-        abort_unless(Auth::user()->esAdmin(), 403);
+        abort_unless(Auth::user()->esAdmin() || Auth::user()->esGth(), 403);
 
         // Enlace del aviso de llamadas pendientes: abre directo el registro.
         if ($id = (int) request()->query('abrir')) {
@@ -95,7 +103,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
 
     public function updated(string $propiedad): void
     {
-        if (in_array($propiedad, ['buscar', 'filtroEtapa', 'filtroReclutador', 'filtroArea', 'filtroMes', 'filtroDia', 'soloAccion', 'orden'], true)) {
+        if (in_array($propiedad, ['buscar', 'filtroEtapa', 'filtroReclutador', 'filtroArea', 'filtroMes', 'filtroDia', 'filtroTipificacion', 'soloAccion', 'orden'], true)) {
             $this->limite = 20;
         }
 
@@ -142,8 +150,13 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
 
     public function limpiarFiltros(): void
     {
-        $this->reset('buscar', 'filtroEtapa', 'filtroReclutador', 'filtroArea', 'filtroMes', 'filtroDia', 'soloAccion');
+        $this->reset('buscar', 'filtroEtapa', 'filtroReclutador', 'filtroArea', 'filtroMes', 'filtroDia', 'filtroTipificacion', 'soloAccion');
         $this->limite = 20;
+    }
+
+    public function alternarAtencion(): void
+    {
+        $this->atencionAbierta = ! $this->atencionAbierta;
     }
 
     public function verMas(): void
@@ -251,8 +264,15 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
         $form = array_fill_keys(GestionCandidatos::FORMULARIO, '');
         $form['fecha_gestion'] = Carbon::now('America/Lima')->toDateString();
         $form['mes'] = $this->servicio()->mesDe($form['fecha_gestion']);
+        $form['agente_reclutador'] = $this->reclutadorPropio();
 
         return $form;
+    }
+
+    /** Quien registra es GTH: su propio nombre es el reclutador por defecto. */
+    private function reclutadorPropio(): string
+    {
+        return Auth::user()->esGth() ? mb_strtoupper(Auth::user()->name) : '';
     }
 
     private function formDe(CandidatoReclutamiento $c): array
@@ -405,7 +425,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
         $this->reiniciarPanel();
         $this->abierto = false;
         $this->mensaje = '';
-        $this->m = array_fill_keys(['agente_reclutador', 'area', 'puesto', 'campana', 'cargo', 'lista'], '') + ['fecha_gestion' => Carbon::now('America/Lima')->toDateString()];
+        $this->m = array_fill_keys(['area', 'puesto', 'campana', 'cargo', 'lista'], '') + ['agente_reclutador' => $this->reclutadorPropio(), 'fecha_gestion' => Carbon::now('America/Lima')->toDateString()];
         $this->masivoFilas = [];
         $this->masivoAviso = '';
         $this->masivoAbierto = true;
@@ -602,7 +622,9 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
         $meses = $todos->pluck('c.fecha_gestion')->filter()->map(fn ($f) => $f->format('Y-m'))->unique()->sortDesc()->values()
             ->mapWithKeys(fn ($m) => [$m => ucfirst(Carbon::createFromFormat('Y-m-d', $m.'-01')->locale('es')->translatedFormat('F Y'))])->all();
 
-        $sinEtapa = $todos->filter(function ($fila) {
+        $tipificacionDe = fn ($c) => mb_strtoupper(trim((string) $c->tipificacion)) ?: 'SIN TIPIFICAR';
+
+        $sinTipificacion = $todos->filter(function ($fila) {
             $c = $fila['c'];
 
             return ($this->buscar === '' || $this->coincide($c, $this->buscar))
@@ -610,8 +632,22 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                 && ($this->filtroArea === '' || mb_strtoupper((string) $c->area) === $this->filtroArea)
                 && ($this->filtroMes === '' || $c->fecha_gestion?->format('Y-m') === $this->filtroMes)
                 && ($this->filtroDia === '' || $c->fecha_gestion?->toDateString() === $this->filtroDia)
-                && (! $this->soloAccion || $fila['accion']['orden'] <= 1);
+                && (! $this->soloAccion || $fila['accion']['orden'] < 2);
         });
+
+        $sinEtapa = $this->filtroTipificacion === ''
+            ? $sinTipificacion
+            : $sinTipificacion->filter(fn ($fila) => $tipificacionDe($fila['c']) === $this->filtroTipificacion);
+
+        // Opciones del filtro con su cantidad (respetando los demás filtros): primero sin tipificar, luego las tipificaciones en su orden.
+        $cantidades = $sinTipificacion->countBy(fn ($fila) => $tipificacionDe($fila['c']));
+        $tipificaciones = [];
+        foreach (array_unique(array_merge(['SIN TIPIFICAR'], GestionCandidatos::TIPIFICACIONES, $cantidades->keys()->sort()->all())) as $tipificacion) {
+            if (($cantidades[$tipificacion] ?? 0) > 0 || $tipificacion === $this->filtroTipificacion) {
+                $tipificaciones[$tipificacion] = $tipificacion === 'SIN TIPIFICAR' ? 'Sin tipificar' : ucfirst(mb_strtolower($tipificacion));
+                $tipificaciones[$tipificacion] .= ' ('.($cantidades[$tipificacion] ?? 0).')';
+            }
+        }
 
         $conteo = $sinEtapa->countBy('etapa');
 
@@ -621,7 +657,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                 'clave' => $clave,
                 'nombre' => $nombre,
                 'total' => $conteo[$clave] ?? 0,
-                'nota' => $sinEtapa->where('etapa', $clave)->filter(fn ($f) => $f['accion']['orden'] <= 1)->count().' con acción',
+                'nota' => $sinEtapa->where('etapa', $clave)->filter(fn ($f) => $f['accion']['orden'] < 2)->count().' con acción',
             ];
         }
 
@@ -654,12 +690,13 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
             ? $pagina->groupBy('fecha')->map(function ($items, $dia) use ($filas, $etiquetaDia) {
                 $delDia = $filas->where('fecha', (string) $dia);
 
-                return ['clave' => (string) $dia, 'titulo' => $etiquetaDia((string) $dia), 'total' => $delDia->count(), 'accion' => $delDia->filter(fn ($f) => $f['accion']['orden'] <= 1)->count(), 'filas' => $items];
+                return ['clave' => (string) $dia, 'titulo' => $etiquetaDia((string) $dia), 'total' => $delDia->count(), 'accion' => $delDia->filter(fn ($f) => $f['accion']['orden'] < 2)->count(), 'filas' => $items];
             })->values()->all()
             : [['clave' => 'todos', 'titulo' => null, 'total' => $filas->count(), 'accion' => 0, 'filas' => $pagina]];
 
-        $prioritarios = $sinEtapa->filter(fn ($f) => $f['accion']['orden'] <= 1)
-            ->sortBy([fn ($a, $b) => $a['accion']['orden'] <=> $b['accion']['orden'], fn ($a, $b) => $b['fecha'] <=> $a['fecha']])->values();
+        $prioritarios = $sinEtapa->filter(fn ($f) => $f['accion']['orden'] < 2)
+            // Lo más urgente primero y, entre iguales, lo más antiguo (lleva más tiempo esperando).
+            ->sortBy([fn ($a, $b) => $a['accion']['orden'] <=> $b['accion']['orden'], fn ($a, $b) => ($a['fecha'] ?: '9999') <=> ($b['fecha'] ?: '9999')])->values();
 
         $f = $this->f;
         $m = $this->m;
@@ -674,11 +711,12 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
             'grupos' => $grupos,
             'prioritarios' => $prioritarios->take(6),
             'prioritariosTotal' => $prioritarios->count(),
-            'conAccionHoy' => $todos->filter(fn ($fila) => $fila['accion']['orden'] <= 1)->count(),
+            'conAccionHoy' => $todos->filter(fn ($fila) => $fila['accion']['orden'] < 2)->count(),
             'reclutadores' => $this->opciones(array_values(array_unique(array_merge($catalogos['reclutadores'], $todos->pluck('c.agente_reclutador')->filter()->map(fn ($n) => mb_strtoupper($n))->all()))), $this->filtroReclutador ?: null),
             'areas' => $this->opciones(array_map('mb_strtoupper', $catalogos['areas']), $this->filtroArea ?: null),
             'meses' => $meses,
-            'hayFiltros' => $this->buscar !== '' || $this->filtroEtapa !== '' || $this->filtroReclutador !== '' || $this->filtroArea !== '' || $this->filtroMes !== '' || $this->filtroDia !== '' || $this->soloAccion,
+            'tipificaciones' => $tipificaciones,
+            'hayFiltros' => $this->buscar !== '' || $this->filtroEtapa !== '' || $this->filtroReclutador !== '' || $this->filtroArea !== '' || $this->filtroMes !== '' || $this->filtroDia !== '' || $this->filtroTipificacion !== '' || $this->soloAccion,
             'masivo' => $this->masivoAbierto ? [
                 'reclutadores' => $this->opciones($catalogos['reclutadores'], $m['agente_reclutador'] ?? null),
                 'areas' => $this->opciones(array_map('mb_strtoupper', $catalogos['areas']), $m['area'] ?? null),
@@ -746,6 +784,11 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
 <div class="space-y-5" wire:key="gestion-candidatos">
     @php($d = $this->datos())
 
+    {{-- Sin grilla compartida, la lista se refresca sola para ver lo que registran los demás (se pausa con un panel abierto). --}}
+    @if (! $abierto && ! $masivoAbierto)
+        <div wire:poll.30s class="hidden" aria-hidden="true"></div>
+    @endif
+
     {{-- Encabezado --}}
     <div class="flex flex-wrap items-center gap-3">
         <p class="min-w-0 flex-1 text-sm text-slate-500">
@@ -797,6 +840,12 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                 <option value="{{ $valor }}">{{ $texto }}</option>
             @endforeach
         </select>
+        <select wire:model.live="filtroTipificacion" class="form-input" aria-label="Tipificación">
+            <option value="">Tipificación: todas</option>
+            @foreach ($d['tipificaciones'] as $valor => $texto)
+                <option value="{{ $valor }}">{{ $texto }}</option>
+            @endforeach
+        </select>
         <input type="date" wire:model.live="filtroDia" class="form-input" aria-label="Día de gestión">
         <button type="button" wire:click="verHoy" class="gc-btn gc-btn-ghost">Hoy</button>
         <label class="inline-flex items-center gap-2 text-sm text-slate-600">
@@ -816,13 +865,17 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
     @if ($d['prioritariosTotal'] > 0 && $orden === 'fecha' && ! $soloAccion)
         <section class="gc-atencion" aria-label="Requieren acción">
             <div class="flex flex-wrap items-center gap-2">
-                <h2 class="text-sm font-bold text-amber-900">Requieren acción ({{ $d['prioritariosTotal'] }})</h2>
-                <span class="text-xs text-amber-800">Entrevistas de hoy, vencidas o con el resultado pendiente.</span>
-                @if ($d['prioritariosTotal'] > $d['prioritarios']->count())
-                    <button type="button" wire:click="$set('soloAccion', true)" class="ml-auto text-xs font-semibold text-amber-900 underline">Ver todos</button>
+                <button type="button" wire:click="alternarAtencion" class="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded="{{ $atencionAbierta ? 'true' : 'false' }}" aria-controls="gc-atencion-lista">
+                    <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-amber-900 transition-transform {{ $atencionAbierta ? 'rotate-90' : '' }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+                    <h2 class="text-sm font-bold text-amber-900">Requieren acción ({{ $d['prioritariosTotal'] }})</h2>
+                    <span class="truncate text-xs text-amber-800">Entrevistas de hoy o vencidas, resultados pendientes y registros sin tipificar.</span>
+                </button>
+                @if ($atencionAbierta && $d['prioritariosTotal'] > $d['prioritarios']->count())
+                    <button type="button" wire:click="$set('soloAccion', true)" class="text-xs font-semibold text-amber-900 underline">Ver todos</button>
                 @endif
             </div>
-            <div class="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            @if ($atencionAbierta)
+            <div id="gc-atencion-lista" class="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 @foreach ($d['prioritarios'] as $p)
                     <button type="button" wire:key="prio-{{ $p['c']->id }}" wire:click="abrir({{ $p['c']->id }})" class="gc-atencion-item">
                         <span class="min-w-0 flex-1">
@@ -833,6 +886,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                     </button>
                 @endforeach
             </div>
+            @endif
         </section>
     @endif
 
@@ -851,7 +905,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
             @foreach ($grupo['filas'] as $fila)
             @php($c = $fila['c'])
             @php($a = $fila['accion'])
-            <button type="button" wire:key="cand-{{ $c->id }}" wire:click="abrir({{ $c->id }})" class="gc-card {{ $fila['etapa'] === 'apto' ? 'gc-card-apto' : '' }} {{ $fila['accion']['orden'] <= 1 ? 'gc-card-accion' : '' }}">
+            <button type="button" wire:key="cand-{{ $c->id }}" wire:click="abrir({{ $c->id }})" class="gc-card {{ $fila['etapa'] === 'apto' ? 'gc-card-apto' : '' }} {{ $fila['accion']['orden'] < 2 ? 'gc-card-accion' : '' }}">
                 <span class="gc-avatar gc-av-{{ $fila['etapa'] }}" aria-hidden="true">{{ Str::upper(Str::substr((string) $c->nombres, 0, 1).Str::substr((string) $c->apellidos, 0, 1)) ?: '?' }}</span>
 
                 <span class="min-w-0">
@@ -924,7 +978,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                     @if ($ac && $ac['graduado'])
                         <div class="gc-aviso bg-indigo-50 text-indigo-800">
                             <p class="font-semibold">Este candidato ya pasó a capacitación.</p>
-                            <p class="mt-0.5">Su gestión ya no se edita aquí: el avance se registra en «Proceso de reclutamiento → Proceso de capacitación».</p>
+                            <p class="mt-0.5">Su gestión de llamada y entrevista ya no se edita aquí.</p>
                             @if (! empty($ac['capacitacion']))
                                 <ul class="mt-2 space-y-0.5 text-xs">
                                     @foreach ($ac['capacitacion'] as [$nombre, $fecha, $asistio, $fechaRep, $asistioRep])

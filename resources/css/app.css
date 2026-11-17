@@ -15,7 +15,8 @@
     --color-primary: #4e73f8;
     --color-primary-content: #ffffff;
     --color-sidebar: #2b2b40;
-    --color-sidebar-active: #363a54;
+    /* El botón activo o bajo el cursor del menú toma un tono del color de tema de cada usuario. */
+    --color-sidebar-active: color-mix(in oklab, var(--color-primary) 30%, var(--color-sidebar));
     --color-surface: #ffffff;
     --color-app: #f4f5f9;
     --color-input: #eef0f7;

@@ -1,4 +1,3 @@
-import './reclutamiento-grid.js';
 import './signature-pad.js';
 
 // Menú lateral desplegable: alterna la clase en <html> y recuerda la elección (el script del layout la aplica antes de pintar).
