@@ -263,7 +263,7 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
         return $candidato ? $this->invitacionDe($candidato)?->empleado : null;
     }
 
-    private function documentosCeseConfig(): array
+    public function documentosCeseConfig(): array
     {
         return [
             'renuncia' => [
@@ -343,6 +343,23 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
         $this->documentosCeseNuevos = [];
     }
 
+    public function abrirDocumentosCese(int $periodoId): void
+    {
+        $this->exigirAdmin();
+
+        $empleado = $this->empleadoActual();
+        $periodo = $empleado?->periodosContrato->firstWhere('id', $periodoId);
+
+        if (! $periodo || ! $periodo->cese || ! array_key_exists($periodo->cese_tipo, $this->documentosCeseConfig())) {
+            return;
+        }
+
+        $this->periodoCeseActivoId = $periodo->id;
+        $this->contratoCeseFecha = $periodo->cese_fecha?->format('Y-m-d') ?? '';
+        $this->contratoCeseTipo = $periodo->cese_tipo;
+        $this->documentosCeseNuevos = [];
+    }
+
     public function cerrarCeseDePeriodo(): void
     {
         $this->periodoCeseActivoId = null;
@@ -358,7 +375,8 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
             ->keyBy('tipo');
 
         $documentos = [];
-        foreach (array_keys($this->documentosCeseDisponibles()) as $tipo) {
+        $config = $this->documentosCeseConfig()[$periodo->cese_tipo ?: $this->contratoCeseTipo] ?? [];
+        foreach (array_keys($config) as $tipo) {
             $documentos[$tipo] = $existentes->get($tipo);
         }
 
@@ -2066,10 +2084,14 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                                                         <td class="whitespace-nowrap py-1.5 pr-2 text-slate-600">{{ $periodo->fecha_fin->format('d/m/Y') }}</td>
                                                         <td class="py-1.5 pr-2 text-center text-slate-600">{{ $periodo->duracion_meses ?: (int) floor($periodo->fecha_inicio->diffInMonths($periodo->fecha_fin->copy()->addDay())) }}</td>
                                                         <td class="py-1.5 pr-2">
-                                                            <span class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide {{ $estadoInfo['clase'] }}">{{ $estadoInfo['label'] }}</span>
+                                                            @if ($periodo->cese)
+                                                                <button type="button" wire:click="abrirDocumentosCese({{ $periodo->id }})" title="Abrir documentos del cese" class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide transition hover:opacity-75 {{ $estadoInfo['clase'] }}">{{ $estadoInfo['label'] }}</button>
+                                                            @else
+                                                                <span class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide {{ $estadoInfo['clase'] }}">{{ $estadoInfo['label'] }}</span>
+                                                            @endif
                                                         </td>
                                                         <td class="py-1.5 pr-2">
-                                                            @if ($periodo->cese)
+                                                            @if ($periodo->cese && $periodoCeseActivoId !== $periodo->id)
                                                                 <span class="text-rose-600">{{ ['renuncia' => 'Renuncia', 'despido' => 'Despido', 'vencimiento' => 'Vencimiento'][$periodo->cese_tipo] ?? $periodo->cese_tipo }} · {{ $periodo->cese_fecha?->format('d/m/Y') }}</span>
                                                             @elseif ($periodoCeseActivoId === $periodo->id)
                                                                 <span class="text-slate-400">Editando…</span>
@@ -2101,6 +2123,7 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                                     @if ($periodoCeseActivoId === $periodo->id)
                                         <div class="mt-2 border-t border-slate-200 pt-2">
                                             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                @if (! $periodo->cese)
                                                 <div class="sm:col-span-2">
                                                     <label class="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Fecha de cese</label>
                                                     <input type="date" wire:model="contratoCeseFecha" class="form-input py-1.5 text-[11px]">
@@ -2114,15 +2137,20 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                                                     :live="true"
                                                     span
                                                 />
+                                                @else
+                                                    <div class="sm:col-span-2 rounded-lg bg-sky-50 px-3 py-2 text-[10px] text-sky-800">
+                                                        Documentos del cese de {{ $periodo->cese_fecha?->format('d/m/Y') }}. Puedes cargarlos o reemplazarlos cuando estén disponibles.
+                                                    </div>
+                                                @endif
                                             </div>
 
                                             @if ($contratoCeseTipo)
                                                 @php($documentosCese = $this->documentosCeseDe($periodo))
 
                                                 <div class="mt-3 space-y-2">
-                                                    @foreach ($this->documentosCeseDisponibles() as $tipoDoc => $infoDoc)
+                                                    @foreach (($this->documentosCeseConfig()[$periodo->cese_tipo ?: $contratoCeseTipo] ?? []) as $tipoDoc => $infoDoc)
                                                         <div class="rounded-lg border border-slate-200 p-2.5">
-                                                            <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{{ $infoDoc['label'] }}</p>
+                                                            <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{{ $infoDoc['label'] }}{{ $tipoDoc === 'liquidacion' ? ' (opcional)' : '' }}</p>
 
                                                             @if ($infoDoc['modo'] === 'generar')
                                                                 @php($plantillaDoc = $this->ceseePlantillaInfo($tipoDoc))
@@ -2206,6 +2234,7 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                                                 </div>
                                             @endif
 
+                                            @if (! $periodo->cese)
                                             <div class="mt-2 flex items-center gap-2">
                                                 <button type="button" wire:click="guardarCeseDePeriodo" wire:loading.attr="disabled" class="btn-secondary flex-1 py-1 text-[10px]">
                                                     Guardar cese
@@ -2214,6 +2243,9 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                                                     Cancelar
                                                 </button>
                                             </div>
+                                            @else
+                                                <button type="button" wire:click="cerrarCeseDePeriodo" class="mt-2 w-full text-[10px] text-slate-500 hover:text-slate-700">Cerrar documentos</button>
+                                            @endif
                                         </div>
                                     @endif
                                                             </td>

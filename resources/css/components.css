@@ -335,6 +335,15 @@
         @apply bg-transparent;
     }
 
+    .asistencia-tabla th,
+    .asistencia-tabla td {
+        @apply py-1 text-[13px];
+    }
+
+    .asistencia-tabla .badge {
+        @apply py-0 text-[11px];
+    }
+
     .asistencia-fila-falta td {
         @apply bg-rose-50/70;
     }

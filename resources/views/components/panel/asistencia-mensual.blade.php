@@ -43,6 +43,9 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia mensual'])] class extends 
 
     public string $comentarioDia = '';
 
+    /** Sección «Día completo» desplegada dentro del detalle de una persona (sin persona siempre se ve). */
+    public bool $diaCompleto = false;
+
     /** Tarjeta del resumen cuyo detalle se está viendo (personas, tardanzas, faltas, sin_marcas, confirmados, por_revisar, justificadas). */
     public ?string $tarjeta = null;
 
@@ -129,6 +132,7 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia mensual'])] class extends 
         $this->tarjeta = null;
         $this->celdaFecha = $fecha;
         $this->celdaEmpleado = $empleadoId;
+        $this->diaCompleto = false;
         $this->cargarComentarios();
     }
 
@@ -166,7 +170,13 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia mensual'])] class extends 
         $this->celdaEmpleado = null;
         $this->comentarioPersona = '';
         $this->comentarioDia = '';
+        $this->diaCompleto = false;
         $this->cancelarJustificacion();
+    }
+
+    public function alternarDiaCompleto(): void
+    {
+        $this->diaCompleto = ! $this->diaCompleto;
     }
 
     private function fechaDelMes(string $fecha): bool
@@ -1158,15 +1168,17 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia mensual'])] class extends 
                     <button type="button" wire:click="cerrar" class="btn-secondary" aria-label="Cerrar">Cerrar ✕</button>
                 </div>
 
-                <div class="min-h-0 flex-1 space-y-5 overflow-y-auto bg-slate-50 p-4">
+                <div class="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
                     @if ($modal['persona'])
                         @php($p = $modal['persona'])
+
+                        {{-- Resumen de la persona en el día --}}
                         <section class="rounded-xl border border-slate-200 bg-white p-4">
-                            <div class="mb-2 flex flex-wrap items-center gap-2">
+                            <div class="flex flex-wrap items-center gap-2">
                                 @if ($p['estado'] === 'marco' && ! $p['tarde'] && ($p['descuento']['estado'] ?? null) === 'no_aplicado' && ($p['descuento']['tipo'] ?? null) === 'tardanza')
-                                    <span class="badge badge-slate" title="Administración marcó «No aplicar»">Entrada {{ $p['entrada'] }} · la tardanza no aplica</span>
+                                    <span class="badge badge-slate" title="Administración marcó «No aplicar»">La tardanza no aplica</span>
                                 @elseif ($p['estado'] === 'marco' && $p['tarde'])
-                                    <span class="badge bg-yellow-100 text-yellow-800">Marcó tarde · {{ $p['entrada'] }} (límite {{ $modal['dia']['limite'] }})</span>
+                                    <span class="badge bg-yellow-100 text-yellow-800">Marcó tarde</span>
                                 @elseif ($p['estado'] === 'marco')
                                     <span class="badge badge-green">Marcó a tiempo</span>
                                 @elseif ($p['estado'] === 'falta')
@@ -1182,143 +1194,195 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia mensual'])] class extends 
                                 @else
                                     <span class="badge badge-slate">Fuera de planilla</span>
                                 @endif
-                                <span class="text-xs text-slate-400">ID de huella: {{ $p['huella'] ?: 'sin asignar' }}</span>
+                                <span class="ml-auto text-xs text-slate-400">ID de huella: {{ $p['huella'] ?: 'sin asignar' }}</span>
                             </div>
 
                             @if ($p['marcaciones'])
-                                <p class="text-sm text-slate-700">
-                                    <strong>Entrada</strong> {{ $p['marcaciones'][0] }}
-                                    · <strong>Salida</strong> {{ count($p['marcaciones']) > 1 ? end($p['marcaciones']) : 'sin marcar' }}
-                                </p>
-                                <p class="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Todas las marcaciones del día ({{ count($p['marcaciones']) }})</p>
-                                <p class="mt-1 flex flex-wrap gap-1.5">
-                                    @foreach ($p['marcaciones'] as $hora)
-                                        <span class="rounded-md bg-emerald-50 px-2 py-0.5 text-sm font-medium text-emerald-700">{{ $hora }}</span>
-                                    @endforeach
-                                </p>
-                            @endif
+                                <div class="mt-3 grid grid-cols-2 gap-3">
+                                    <div class="rounded-lg bg-slate-50 px-3 py-2">
+                                        <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Entrada</p>
+                                        <p class="text-xl font-bold tabular-nums {{ $p['estado'] === 'marco' && $p['tarde'] ? 'text-yellow-700' : 'text-slate-900' }}">{{ $p['marcaciones'][0] }}</p>
+                                        @if ($modal['dia']['laborable'] && $modal['dia']['limite'])
+                                            <p class="text-[11px] text-slate-400">Límite {{ $modal['dia']['limite'] }}</p>
+                                        @endif
+                                    </div>
+                                    <div class="rounded-lg bg-slate-50 px-3 py-2">
+                                        <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Salida</p>
+                                        @if (count($p['marcaciones']) > 1)
+                                            <p class="text-xl font-bold tabular-nums text-slate-900">{{ end($p['marcaciones']) }}</p>
+                                        @else
+                                            <p class="text-xl font-semibold text-slate-300">Sin marcar</p>
+                                        @endif
+                                    </div>
+                                </div>
 
-                            <label for="comentario-persona" class="mb-1 mt-4 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Comentario de la persona</label>
-                            @if ($p['puede_comentar'])
-                                <textarea id="comentario-persona" wire:model.live.blur="comentarioPersona" rows="2" maxlength="500" placeholder="{{ $p['estado'] === 'falta' ? 'Motivo de la falta (opcional)' : 'Opcional' }}" class="form-input max-h-24 min-h-[3.25rem] resize-y overflow-y-auto text-sm"></textarea>
-                                <p class="mt-1 text-[11px] text-slate-400">Se guarda solo al salir de la caja.</p>
-                            @else
-                                <p class="text-xs text-slate-400">{{ $p['huella'] ? 'No se puede comentar: la persona no estaba en planilla ese día.' : 'Asigna primero su ID de huella para poder comentar.' }}</p>
+                                @if (count($p['marcaciones']) > 2)
+                                    <p class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                                        <span>Todas las marcaciones ({{ count($p['marcaciones']) }}):</span>
+                                        @foreach ($p['marcaciones'] as $hora)
+                                            <span class="rounded bg-emerald-50 px-1.5 py-0.5 font-medium tabular-nums text-emerald-700">{{ $hora }}</span>
+                                        @endforeach
+                                    </p>
+                                @endif
                             @endif
                         </section>
-                    @endif
 
-                    @if ($modal['persona'] && $modal['persona']['descuento'])
-                        @php($ds = $modal['persona']['descuento'])
-                        <section class="rounded-xl border border-slate-200 bg-white p-4">
-                            <div class="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-                                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Descuento sugerido</p>
-                                @if ($ds['estado'] === 'aplicado')
-                                    <span class="badge badge-rose">Se descuenta S/ {{ number_format($ds['monto'], 2) }}</span>
-                                @elseif ($ds['estado'] === 'justificada')
-                                    <span class="badge badge-green">Falta justificada</span>
-                                @elseif ($ds['estado'] === 'no_aplicado')
-                                    <span class="badge badge-slate">No se descuenta</span>
-                                @else
-                                    <span class="badge bg-yellow-100 text-yellow-800">Por revisar</span>
-                                @endif
-                            </div>
-
-                            <p class="text-sm text-slate-700">
-                                @if ($ds['tipo'] === 'falta')
-                                    <strong>Falta</strong> · día completo
-                                @else
-                                    <strong>Tardanza</strong> · entrada {{ $modal['persona']['entrada'] }} · {{ \App\Services\DescuentosAsistencia::etiquetaTramo($ds['tramo']) }}
-                                @endif
-                                →
-                                @if ($ds['sugerido'] !== null)
-                                    <strong>S/ {{ number_format($ds['sugerido'], 2) }}</strong>
-                                    @if ($ds['tramo'] !== 'fijo')<span class="text-xs text-slate-400">(día = S/ {{ number_format($modal['persona']['pago_dia'], 2) }})</span>@endif
-                                @else
-                                    <span class="text-amber-600">falta registrar el sueldo para calcular el monto</span>
-                                    <button type="button" wire:click="abrirSueldo({{ $celdaEmpleado }})" class="btn-secondary ml-2 w-auto py-1 text-xs">Registrar sueldo</button>
-                                @endif
-                            </p>
-                            @error('descuento')
-                                <p class="mt-2 text-sm text-rose-600" role="alert">{{ $message }}</p>
-                            @enderror
-
-                            @if ($ds['estado'] === 'justificada')
-                                <div class="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">
-                                    <p class="whitespace-pre-line">{{ $ds['comentario'] }}</p>
-                                    @if ($ds['sustento_id'])
-                                        <a href="{{ route('asistencia.sustento', $ds['sustento_id']) }}" target="_blank" rel="noopener" class="mt-1 inline-block text-xs font-medium text-primary hover:underline">Ver sustento: {{ $ds['sustento_nombre'] }}</a>
-                                    @endif
-                                </div>
-                                <button type="button" wire:click="quitarDecision({{ $celdaEmpleado }}, '{{ $celdaFecha }}')" wire:confirm="¿Quitar la justificación? La falta volverá a quedar por revisar y se borrará el sustento." class="btn-secondary mt-3 w-auto text-xs">Quitar la justificación</button>
-                            @else
-                                <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
-                                    @if ($ds['estado'] !== 'no_aplicado')
-                                    <label class="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
-                                        <input type="checkbox" wire:key="modal-chk-{{ $ds['estado'] }}" wire:change="aplicarDescuento({{ $celdaEmpleado }}, '{{ $celdaFecha }}', $event.target.checked)" @checked($ds['estado'] === 'aplicado') @disabled($ds['sugerido'] === null && $ds['estado'] !== 'aplicado') class="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary/40 disabled:opacity-40" />
-                                        {{ $ds['tipo'] === 'falta' ? 'Confirmar la falta y aplicar el descuento' : 'Aplicar el descuento' }}
-                                    </label>
-                                    @endif
-                                    @if ($ds['estado'] !== 'no_aplicado')
-                                        <button type="button" wire:click="descartarDescuento({{ $celdaEmpleado }}, '{{ $celdaFecha }}')" class="gth-click-numero text-sm text-slate-500">No aplicar</button>
+                        {{-- Descuento sugerido --}}
+                        @if ($p['descuento'])
+                            @php($ds = $p['descuento'])
+                            <section class="rounded-xl border border-l-4 border-slate-200 bg-white p-4 {{ match ($ds['estado']) { 'aplicado' => 'border-l-rose-400', 'justificada' => 'border-l-emerald-400', 'no_aplicado' => 'border-l-slate-300', default => 'border-l-yellow-400' } }}">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Descuento sugerido</p>
+                                    @if ($ds['estado'] === 'aplicado')
+                                        <span class="badge badge-rose">Se descuenta S/ {{ number_format($ds['monto'], 2) }}</span>
+                                    @elseif ($ds['estado'] === 'justificada')
+                                        <span class="badge badge-green">Falta justificada</span>
+                                    @elseif ($ds['estado'] === 'no_aplicado')
+                                        <span class="badge badge-slate">No se descuenta</span>
                                     @else
-                                        <button type="button" wire:click="quitarDecision({{ $celdaEmpleado }}, '{{ $celdaFecha }}')" class="gth-click-numero text-sm text-slate-500">Volver a «por revisar»</button>
-                                    @endif
-                                    @if ($ds['tipo'] === 'falta' && ! $justificando)
-                                        <button type="button" wire:click="iniciarJustificacion" class="btn-secondary w-auto py-1 text-xs">Justificar la falta</button>
+                                        <span class="badge bg-yellow-100 text-yellow-800">Por revisar</span>
                                     @endif
                                 </div>
 
-                                @if ($ds['tipo'] === 'falta' && $justificando)
-                                    <form wire:submit="guardarJustificacion" class="mt-4 space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
-                                        <p class="text-sm font-medium text-emerald-900">Justificar la falta: adjunta un documento o una fotografía y escribe un breve comentario.</p>
-                                        <div>
-                                            <label for="sustento" class="form-label">Sustento (PDF, foto JPG/PNG o Word · máx. 10 MB)</label>
-                                            <input id="sustento" type="file" wire:model="sustento" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,image/*" class="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" />
-                                            <p wire:loading wire:target="sustento" class="mt-1 text-xs text-slate-500">Subiendo el archivo…</p>
-                                            @error('sustento') <p class="form-error">{{ $message }}</p> @enderror
-                                        </div>
-                                        <div>
-                                            <label for="justificacion-comentario" class="form-label">Comentario</label>
-                                            <textarea id="justificacion-comentario" wire:model="justificacionComentario" rows="2" maxlength="500" placeholder="Ej.: cita médica; adjunta el certificado." class="form-input max-h-24 min-h-[3.25rem] resize-y overflow-y-auto text-sm"></textarea>
-                                            @error('justificacionComentario') <p class="form-error">{{ $message }}</p> @enderror
-                                        </div>
-                                        <div class="flex gap-2">
-                                            <button type="submit" class="btn-primary w-auto" wire:loading.attr="disabled" wire:target="guardarJustificacion,sustento">
-                                                <span wire:loading.remove wire:target="guardarJustificacion">Guardar justificación</span>
-                                                <span wire:loading wire:target="guardarJustificacion">Guardando…</span>
-                                            </button>
-                                            <button type="button" wire:click="cancelarJustificacion" class="btn-secondary w-auto">Cancelar</button>
-                                        </div>
-                                    </form>
-                                @endif
-                            @endif
-                        </section>
-                    @endif
+                                <div class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                    @if ($ds['sugerido'] !== null)
+                                        <span class="text-2xl font-bold tabular-nums text-slate-900">S/ {{ number_format($ds['sugerido'], 2) }}</span>
+                                    @else
+                                        <span class="text-sm text-amber-600">Falta registrar el sueldo para calcular el monto</span>
+                                        <button type="button" wire:click="abrirSueldo({{ $celdaEmpleado }})" class="btn-secondary w-auto py-1 text-xs">Registrar sueldo</button>
+                                    @endif
+                                    <span class="text-sm text-slate-600">
+                                        @if ($ds['tipo'] === 'falta')
+                                            <strong>Falta</strong> · día completo
+                                        @else
+                                            <strong>Tardanza</strong> · entrada {{ $p['entrada'] }} · {{ \App\Services\DescuentosAsistencia::etiquetaTramo($ds['tramo']) }}
+                                        @endif
+                                        @if ($ds['sugerido'] !== null && $ds['tramo'] !== 'fijo')
+                                            <span class="text-xs text-slate-400">(día = S/ {{ number_format($p['pago_dia'], 2) }})</span>
+                                        @endif
+                                    </span>
+                                </div>
+                                @error('descuento')
+                                    <p class="mt-2 text-sm text-rose-600" role="alert">{{ $message }}</p>
+                                @enderror
 
-                    <section class="rounded-xl border border-slate-200 bg-white p-4">
-                        <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Día completo</p>
-                        <p class="mt-1 text-sm text-slate-700">
-                            @if ($modal['dia']['futuro'])
-                                Este día todavía no llega.
-                            @elseif ($modal['dia']['con_marcas'])
-                                Marcaron <strong>{{ $modal['dia']['marcaron'] }}</strong> de <strong>{{ $modal['dia']['en_planilla'] }}</strong> en planilla.
-                            @elseif ($modal['dia']['feriado'])
-                                Feriado: {{ $modal['dia']['feriado'] }}. No se trabaja y no cuenta como falta.
-                            @elseif (! $modal['dia']['laborable'])
-                                Día que no se trabaja: no cuenta como falta.
-                            @else
-                                Nadie marcó este día (feriado o falla del biométrico): no cuenta como falta.
-                            @endif
-                            <span class="block text-xs text-slate-400">{{ $modal['dia']['laborable'] ? 'Día laborable · límite de entrada '.$modal['dia']['limite'] : ($modal['dia']['feriado'] ? 'Día no laborable (feriado)' : 'Día no laborable (sábado que no se trabaja)') }}</span>
-                        </p>
-                        @if (! empty($modal['dia']['faltaron']))
-                            <p class="mt-2 text-xs text-slate-500">Faltaron ({{ count($modal['dia']['faltaron']) }}): {{ implode(' · ', $modal['dia']['faltaron']) }}</p>
+                                @if ($ds['estado'] === 'justificada')
+                                    <div class="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">
+                                        <p class="whitespace-pre-line">{{ $ds['comentario'] }}</p>
+                                        @if ($ds['sustento_id'])
+                                            <a href="{{ route('asistencia.sustento', $ds['sustento_id']) }}" target="_blank" rel="noopener" class="mt-1 inline-block text-xs font-medium text-primary hover:underline">Ver sustento: {{ $ds['sustento_nombre'] }}</a>
+                                        @endif
+                                    </div>
+                                    <button type="button" wire:click="quitarDecision({{ $celdaEmpleado }}, '{{ $celdaFecha }}')" wire:confirm="¿Quitar la justificación? La falta volverá a quedar por revisar y se borrará el sustento." class="btn-secondary mt-3 w-auto text-xs">Quitar la justificación</button>
+                                @else
+                                    <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-100 pt-3">
+                                        @if ($ds['estado'] !== 'no_aplicado')
+                                            <label class="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+                                                <input type="checkbox" wire:key="modal-chk-{{ $ds['estado'] }}" wire:change="aplicarDescuento({{ $celdaEmpleado }}, '{{ $celdaFecha }}', $event.target.checked)" @checked($ds['estado'] === 'aplicado') @disabled($ds['sugerido'] === null && $ds['estado'] !== 'aplicado') class="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary/40 disabled:opacity-40" />
+                                                {{ $ds['tipo'] === 'falta' ? 'Confirmar la falta y aplicar el descuento' : 'Aplicar el descuento' }}
+                                            </label>
+                                            <button type="button" wire:click="descartarDescuento({{ $celdaEmpleado }}, '{{ $celdaFecha }}')" class="gth-click-numero text-sm text-slate-500">No aplicar</button>
+                                        @else
+                                            <button type="button" wire:click="quitarDecision({{ $celdaEmpleado }}, '{{ $celdaFecha }}')" class="gth-click-numero text-sm text-slate-500">Volver a «por revisar»</button>
+                                        @endif
+                                        @if ($ds['tipo'] === 'falta' && ! $justificando)
+                                            <button type="button" wire:click="iniciarJustificacion" class="btn-secondary w-auto py-1 text-xs">Justificar la falta</button>
+                                        @endif
+                                    </div>
+
+                                    @if ($ds['tipo'] === 'falta' && $justificando)
+                                        <form wire:submit="guardarJustificacion" class="mt-4 space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                                            <p class="text-sm font-medium text-emerald-900">Justificar la falta: adjunta un documento o una fotografía y escribe un breve comentario.</p>
+                                            <div>
+                                                <label for="sustento" class="form-label">Sustento (PDF, foto JPG/PNG o Word · máx. 10 MB)</label>
+                                                <input id="sustento" type="file" wire:model="sustento" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,image/*" class="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" />
+                                                <p wire:loading wire:target="sustento" class="mt-1 text-xs text-slate-500">Subiendo el archivo…</p>
+                                                @error('sustento') <p class="form-error">{{ $message }}</p> @enderror
+                                            </div>
+                                            <div>
+                                                <label for="justificacion-comentario" class="form-label">Comentario</label>
+                                                <textarea id="justificacion-comentario" wire:model="justificacionComentario" rows="2" maxlength="500" placeholder="Ej.: cita médica; adjunta el certificado." class="form-input max-h-24 min-h-[3.25rem] resize-y overflow-y-auto text-sm"></textarea>
+                                                @error('justificacionComentario') <p class="form-error">{{ $message }}</p> @enderror
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <button type="submit" class="btn-primary w-auto" wire:loading.attr="disabled" wire:target="guardarJustificacion,sustento">
+                                                    <span wire:loading.remove wire:target="guardarJustificacion">Guardar justificación</span>
+                                                    <span wire:loading wire:target="guardarJustificacion">Guardando…</span>
+                                                </button>
+                                                <button type="button" wire:click="cancelarJustificacion" class="btn-secondary w-auto">Cancelar</button>
+                                            </div>
+                                        </form>
+                                    @endif
+                                @endif
+                            </section>
                         @endif
 
-                        <label for="comentario-dia-mensual" class="mb-1 mt-4 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Comentario del día</label>
-                        <textarea id="comentario-dia-mensual" wire:model.live.blur="comentarioDia" rows="2" maxlength="1000" placeholder="Ej.: la máquina de marcación no funcionó." class="form-input max-h-24 min-h-[3.25rem] resize-y overflow-y-auto text-sm"></textarea>
-                        <p class="mt-1 text-[11px] text-slate-400">Se guarda solo al salir de la caja. Lo ve también GTH en la asistencia del día.</p>
+                        {{-- Comentario de la persona --}}
+                        <section class="rounded-xl border border-slate-200 bg-white p-4">
+                            <label for="comentario-persona" class="flex flex-wrap items-baseline justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                <span>Comentario de la persona</span>
+                                @if ($p['puede_comentar'])
+                                    <span class="font-normal normal-case text-slate-400">Se guarda al salir de la caja</span>
+                                @endif
+                            </label>
+                            @if ($p['puede_comentar'])
+                                <textarea id="comentario-persona" wire:model.live.blur="comentarioPersona" rows="2" maxlength="500" placeholder="{{ $p['estado'] === 'falta' ? 'Motivo de la falta (opcional)' : 'Opcional' }}" class="form-input mt-1 max-h-24 min-h-[3rem] resize-y overflow-y-auto text-sm"></textarea>
+                            @else
+                                <p class="mt-1 text-xs text-slate-400">{{ $p['huella'] ? 'No se puede comentar: la persona no estaba en planilla ese día.' : 'Asigna primero su ID de huella para poder comentar.' }}</p>
+                            @endif
+                        </section>
+                    @endif
+
+                    {{-- Día completo: con una persona abierta queda plegado para no estorbar --}}
+                    @php($dia = $modal['dia'])
+                    @php($resumenDia = match (true) {
+                        $dia['futuro'] => 'Este día todavía no llega',
+                        $dia['con_marcas'] => 'Marcaron '.$dia['marcaron'].' de '.$dia['en_planilla'].' en planilla',
+                        (bool) $dia['feriado'] => 'Feriado: '.$dia['feriado'],
+                        ! $dia['laborable'] => 'Día que no se trabaja',
+                        default => 'Nadie marcó este día',
+                    })
+                    <section class="rounded-xl border border-slate-200 bg-white">
+                        @if ($modal['persona'])
+                            <button type="button" wire:click="alternarDiaCompleto" class="flex w-full items-center gap-2 px-4 py-3 text-left" aria-expanded="{{ $diaCompleto ? 'true' : 'false' }}">
+                                <svg aria-hidden="true" class="h-4 w-4 shrink-0 text-slate-400 transition-transform {{ $diaCompleto ? 'rotate-90' : '' }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+                                <span class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Día completo</span>
+                                <span class="min-w-0 flex-1 truncate text-sm text-slate-600">{{ $resumenDia }}</span>
+                                @if ($comentarioDia !== '')
+                                    <span class="badge badge-amber" title="Este día tiene un comentario">Comentario</span>
+                                @endif
+                            </button>
+                        @else
+                            <div class="px-4 pt-4">
+                                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Día completo</p>
+                                <p class="mt-1 text-sm text-slate-700">{{ $resumenDia }}.</p>
+                            </div>
+                        @endif
+
+                        @if ($diaCompleto || ! $modal['persona'])
+                            <div class="space-y-3 px-4 pb-4 {{ $modal['persona'] ? 'border-t border-slate-100 pt-3' : 'pt-2' }}">
+                                <p class="text-xs text-slate-400">{{ $dia['laborable'] ? 'Día laborable · límite de entrada '.$dia['limite'] : ($dia['feriado'] ? 'Día no laborable (feriado): no cuenta como falta.' : 'Día no laborable: no cuenta como falta.') }}</p>
+
+                                @if (! empty($dia['faltaron']))
+                                    <div>
+                                        <p class="mb-1 text-xs font-medium text-slate-600">Faltaron ({{ count($dia['faltaron']) }})</p>
+                                        <p class="flex flex-wrap gap-1">
+                                            @foreach ($dia['faltaron'] as $nombreFalto)
+                                                <span class="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] text-rose-700">{{ $nombreFalto }}</span>
+                                            @endforeach
+                                        </p>
+                                    </div>
+                                @endif
+
+                                <div>
+                                    <label for="comentario-dia-mensual" class="flex flex-wrap items-baseline justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                        <span>Comentario del día</span>
+                                        <span class="font-normal normal-case text-slate-400">Se guarda al salir de la caja · lo ve también GTH</span>
+                                    </label>
+                                    <textarea id="comentario-dia-mensual" wire:model.live.blur="comentarioDia" rows="2" maxlength="1000" placeholder="Ej.: la máquina de marcación no funcionó." class="form-input mt-1 max-h-24 min-h-[3rem] resize-y overflow-y-auto text-sm"></textarea>
+                                </div>
+                            </div>
+                        @endif
                     </section>
                 </div>
             </div>

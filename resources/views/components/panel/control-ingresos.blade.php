@@ -30,9 +30,9 @@ new #[Layout('layouts.panel', ['title' => 'Control de ingresos'])] class extends
 
     /** Documentos que se suben al cesar a alguien (la constancia de trabajo solo se genera, no se carga). */
     private const CESE_DOCS = [
-        'renuncia' => ['carta_renuncia' => 'Carta de renuncia', 'liquidacion' => 'Liquidación'],
-        'despido' => ['liquidacion' => 'Liquidación', 'carta_no_continuidad_firmada' => 'Carta de no continuidad (firmada)'],
-        'vencimiento' => ['liquidacion' => 'Liquidación', 'carta_no_renovacion_firmada' => 'Carta de no renovación (firmada)'],
+        'renuncia' => ['carta_renuncia' => 'Carta de renuncia'],
+        'despido' => ['carta_no_continuidad_firmada' => 'Carta de no continuidad (firmada)'],
+        'vencimiento' => ['carta_no_renovacion_firmada' => 'Carta de no renovación (firmada)'],
     ];
 
     /** Estado actual del contrato del trabajador (clave => [etiqueta, color de insignia]). */

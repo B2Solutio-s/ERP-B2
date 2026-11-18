@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
+use Livewire\Attributes\Renderless;
 use Livewire\Component;
 
 new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Component
@@ -60,54 +61,71 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
         $this->comentarioDia = (string) AsistenciaComentarioDia::whereDate('fecha', $this->fecha)->value('comentario');
     }
 
-    public function updatedComentarioDia(): void
+    /**
+     * Guarda el comentario de todo el día. Lo llama el navegador al dejar de escribir (ver resources/js/app.js) y no vuelve a pintar
+     * la página: así el texto que se está escribiendo nunca se borra por un refresco (p. ej. cuando alguien marca en el biométrico).
+     *
+     * @return array{ok: bool, mensaje?: string}
+     */
+    #[Renderless]
+    public function guardarComentarioDia(string $fecha, string $texto): array
     {
         abort_unless(Auth::user()->esAdmin(), 403);
 
-        $texto = mb_substr(trim($this->comentarioDia), 0, 1000);
-        $this->comentarioDia = $texto;
+        if ($fecha !== $this->fecha) {
+            return ['ok' => false, 'mensaje' => 'La fecha cambió. Actualiza la página e inténtalo de nuevo.'];
+        }
 
-        if ($texto === '') {
+        $limpio = mb_substr(trim($texto), 0, 1000);
+        $this->comentarioDia = $limpio;
+
+        if ($limpio === '') {
             AsistenciaComentarioDia::whereDate('fecha', $this->fecha)->delete();
 
-            return;
+            return ['ok' => true];
         }
 
         AsistenciaComentarioDia::updateOrCreate(
             ['fecha' => $this->fecha],
-            ['comentario' => $texto, 'user_id' => Auth::id()],
+            ['comentario' => $limpio, 'user_id' => Auth::id()],
         );
+
+        return ['ok' => true];
     }
 
-    public function updatedComentarios(mixed $valor = null, ?string $biometricoId = null): void
+    /** Guarda el comentario de una persona en el día elegido (mismas razones que el del día: sin volver a pintar la página). */
+    #[Renderless]
+    public function guardarComentario(string $fecha, string $biometricoId, string $texto): array
     {
         abort_unless(Auth::user()->esAdmin(), 403);
 
-        // Solo IDs que marcaron ese día (también sirve para huellas sin vincular) o personal que faltó a marcar.
-        $permitido = $biometricoId !== null && (
-            AsistenciaMarcacion::where('biometrico_id', $biometricoId)->whereDate('marcado_at', $this->fecha)->exists()
-            || $this->faltanMarcar()->contains('biometrico_id', $biometricoId)
-        );
-
-        if (! $permitido) {
-            $this->cargarComentarios();
-
-            return;
+        if ($fecha !== $this->fecha) {
+            return ['ok' => false, 'mensaje' => 'La fecha cambió. Actualiza la página e inténtalo de nuevo.'];
         }
 
-        $texto = mb_substr(trim((string) $valor), 0, 500);
-        $this->comentarios[$biometricoId] = $texto;
+        // Solo IDs que marcaron ese día (también sirve para huellas sin vincular) o personal que faltó a marcar.
+        $permitido = AsistenciaMarcacion::where('biometrico_id', $biometricoId)->whereDate('marcado_at', $this->fecha)->exists()
+            || $this->faltanMarcar()->contains('biometrico_id', $biometricoId);
 
-        if ($texto === '') {
+        if (! $permitido) {
+            return ['ok' => false, 'mensaje' => 'Esa persona no figura en la asistencia de este día. Actualiza la página.'];
+        }
+
+        $limpio = mb_substr(trim($texto), 0, 500);
+        $this->comentarios[$biometricoId] = $limpio;
+
+        if ($limpio === '') {
             AsistenciaComentario::where('biometrico_id', $biometricoId)->whereDate('fecha', $this->fecha)->delete();
 
-            return;
+            return ['ok' => true];
         }
 
         AsistenciaComentario::updateOrCreate(
             ['biometrico_id' => $biometricoId, 'fecha' => $this->fecha],
-            ['comentario' => $texto, 'user_id' => Auth::id()],
+            ['comentario' => $limpio, 'user_id' => Auth::id()],
         );
+
+        return ['ok' => true];
     }
 
     #[On('asistencia-registrada')]
@@ -353,19 +371,23 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
     @endif
 
     @if ($esAdmin)
-        <div class="card-panel-compact {{ $comentarioDia !== '' ? 'border-l-4 border-l-amber-400' : '' }}">
+        {{-- wire:ignore: el texto que se escribe no se toca cuando la página se refresca por marcaciones en vivo. Se guarda con resources/js/app.js. --}}
+        <div wire:key="comentario-dia-{{ $fecha }}" wire:ignore class="card-panel-compact {{ $comentarioDia !== '' ? 'border-l-4 border-l-amber-400' : '' }}">
             <label for="comentario-dia" class="mb-1 flex flex-wrap items-baseline justify-between gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <span>Comentario del día · {{ \Illuminate\Support\Carbon::parse($fecha)->format('d/m/Y') }}</span>
-                <span class="font-normal normal-case text-slate-400">Se guarda solo al salir de la caja · lo ve también GTH</span>
+                <span class="flex items-center gap-3">
+                    <span data-comentario-estado class="whitespace-nowrap text-[11px] font-semibold normal-case" role="status"></span>
+                    <span class="font-normal normal-case text-slate-400">Se guarda solo al dejar de escribir · lo ve también GTH</span>
+                </span>
             </label>
             <textarea
                 id="comentario-dia"
-                wire:model.live.blur="comentarioDia"
+                data-comentario-dia="{{ $fecha }}"
                 rows="2"
                 maxlength="1000"
                 placeholder="Ej.: la máquina de marcación no funcionó. Nadie pudo marcar este día."
                 class="form-input max-h-24 min-h-[3.25rem] resize-y overflow-y-auto text-sm"
-            ></textarea>
+            >{{ $comentarioDia }}</textarea>
         </div>
     @elseif ($comentarioDia !== '')
         <div class="rounded-lg border-l-4 border-l-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="note">
@@ -452,7 +474,7 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
         </div>
 
         <div class="overflow-x-auto">
-            <table class="data-table">
+            <table class="data-table asistencia-tabla">
                 <thead>
                     <tr>
                         <th>Hora</th>
@@ -465,7 +487,7 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
                 </thead>
                 <tbody>
                     @foreach ($verMarcaron ? $marcaciones : collect() as $marcacion)
-                        <tr wire:key="marcacion-{{ $marcacion->id }}">
+                        <tr wire:key="marcacion-{{ $fecha }}-{{ $marcacion->id }}">
                             <td>{{ $marcacion->marcado_at->format('H:i:s') }}</td>
                             <td>{{ $marcacion->biometrico_id }}</td>
                             <td>
@@ -479,21 +501,26 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
                             <td><span class="badge badge-green">Marcó</span></td>
                             @if ($esAdmin)
                                 <td>
-                                    <input
-                                        type="text"
-                                        wire:model.live.blur="comentarios.{{ $marcacion->biometrico_id }}"
-                                        maxlength="500"
-                                        placeholder="Opcional"
-                                        class="form-input w-64 py-1 text-xs"
-                                        aria-label="Comentario del día"
-                                    />
+                                    <div wire:ignore class="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            data-comentario-asistencia="{{ $marcacion->biometrico_id }}"
+                                            data-fecha="{{ $fecha }}"
+                                            value="{{ $comentarios[$marcacion->biometrico_id] ?? '' }}"
+                                            maxlength="500"
+                                            placeholder="Opcional"
+                                            class="form-input w-64 py-0.5 text-xs"
+                                            aria-label="Comentario del día"
+                                        />
+                                        <span data-comentario-estado class="w-[4.75rem] shrink-0 whitespace-nowrap text-[11px] font-semibold" role="status"></span>
+                                    </div>
                                 </td>
                             @endif
                         </tr>
                     @endforeach
 
                     @foreach ($verFaltan ? $faltan : collect() as $persona)
-                        <tr wire:key="falta-{{ $persona['id'] }}" class="asistencia-fila-falta">
+                        <tr wire:key="falta-{{ $fecha }}-{{ $persona['id'] }}" class="asistencia-fila-falta">
                             <td class="text-slate-400">—</td>
                             <td>
                                 @if ($persona['biometrico_id'])
@@ -505,7 +532,7 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
                             <td>
                                 {{ $persona['nombre'] }}
                                 @if ($persona['detalle'])
-                                    <span class="block text-[11px] text-slate-400">{{ $persona['detalle'] }}</span>
+                                    <span class="ml-1 text-[11px] text-slate-400">· {{ $persona['detalle'] }}</span>
                                 @endif
                             </td>
                             <td>{{ $persona['dni'] }}</td>
@@ -513,14 +540,19 @@ new #[Layout('layouts.panel', ['title' => 'Asistencia'])] class extends Componen
                             @if ($esAdmin)
                                 <td>
                                     @if ($persona['biometrico_id'])
-                                        <input
-                                            type="text"
-                                            wire:model.live.blur="comentarios.{{ $persona['biometrico_id'] }}"
-                                            maxlength="500"
-                                            placeholder="Motivo de la falta (opcional)"
-                                            class="form-input w-64 py-1 text-xs"
-                                            aria-label="Comentario del día"
-                                        />
+                                        <div wire:ignore class="flex items-center gap-2">
+                                            <input
+                                                type="text"
+                                                data-comentario-asistencia="{{ $persona['biometrico_id'] }}"
+                                                data-fecha="{{ $fecha }}"
+                                                value="{{ $comentarios[$persona['biometrico_id']] ?? '' }}"
+                                                maxlength="500"
+                                                placeholder="Motivo de la falta (opcional)"
+                                                class="form-input w-64 py-0.5 text-xs"
+                                                aria-label="Comentario del día"
+                                            />
+                                            <span data-comentario-estado class="w-[4.75rem] shrink-0 whitespace-nowrap text-[11px] font-semibold" role="status"></span>
+                                        </div>
                                     @else
                                         <span class="text-xs text-slate-400" title="El comentario se guarda con el ID de huella de la persona">Asigna primero su ID de huella</span>
                                     @endif
