@@ -164,9 +164,25 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
 
     public string $nuevoPeriodoDuracion = '';
 
+    /** Abierto dentro de un iframe de otro módulo (?embed=1): solo se muestra el modal de datos. */
+    public bool $embebido = false;
+
     public function mount(): void
     {
         abort_unless(Auth::user()->esAdmin() || Auth::user()->esGth(), 403);
+
+        $this->embebido = request()->boolean('embed');
+
+        // Enlace directo al modal «Datos de …» (p. ej. desde Seguimiento de ejecutivos): ?abrir=ID[&pestana=seguimiento]
+        $abrir = (int) request()->query('abrir');
+
+        if ($abrir > 0 && CandidatoReclutamiento::where('apto', true)->whereKey($abrir)->exists()) {
+            $this->abrirDatos($abrir);
+
+            if (request()->query('pestana') === 'seguimiento' && $this->empleadoActual()) {
+                $this->seleccionarPestanaDatos('seguimiento');
+            }
+        }
     }
 
     /** Contratos, ceses y renovaciones son solo de administración (GTH ve únicamente la pestaña Datos). */
@@ -936,6 +952,10 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
 
     public function cerrarDatos(): void
     {
+        if ($this->embebido) {
+            $this->js("window.parent.postMessage({ tipo: 'cerrar-datos-embebidos' }, window.location.origin)");
+        }
+
         $this->datosModalId = null;
         $this->pestanaDatosModal = 'datos';
         $this->panelGenerarAbierto = false;
@@ -1083,6 +1103,7 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
 
     public function seleccionarPestanaDatos(string $pestana): void
     {
+        // Contrato es solo del administrador; Seguimiento también lo usa GTH.
         if ($pestana === 'contrato') {
             $this->exigirAdmin();
         }
@@ -1782,6 +1803,7 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
 ?>
 
 <div class="space-y-6">
+    @unless ($embebido)
     <div class="reclutamiento-filter-bar">
         @if ($filtroAbierto !== '')
             <button type="button" wire:click="cerrarFiltro" class="fixed inset-0 z-30 cursor-default" aria-label="Cerrar filtro" tabindex="-1"></button>
@@ -1938,6 +1960,8 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
         </table>
     </div>
 
+    @endunless
+
     @if ($this->empleadoSeleccionado())
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
             <div class="flex h-[min(92vh,900px)] w-full max-w-[min(96vw,900px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
@@ -2002,6 +2026,17 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                             class="reclutamiento-tab text-[11px]{{ $pestanaDatosModal === 'contrato' ? ' is-active' : '' }}"
                         >
                             Contrato
+                        </button>
+                    @endif
+                    @if ($datosContacto['tiene_empleado'])
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected="{{ $pestanaDatosModal === 'seguimiento' ? 'true' : 'false' }}"
+                            wire:click="seleccionarPestanaDatos('seguimiento')"
+                            class="reclutamiento-tab text-[11px]{{ $pestanaDatosModal === 'seguimiento' ? ' is-active' : '' }}"
+                        >
+                            Seguimiento
                         </button>
                     @endif
                 </div>
@@ -2416,6 +2451,8 @@ new #[Layout('layouts.panel', ['title' => 'Registro de ingresos'])] class extend
                             </aside>
                         @endif
                     </div>
+                @elseif ($pestanaDatosModal === 'seguimiento' && $this->empleadoActual())
+                    <livewire:panel.seguimiento-trabajador :empleado-id="$this->empleadoActual()->id" :key="'seguimiento-'.$this->empleadoActual()->id" />
                 @else
                 <div class="flex min-h-0 flex-1">
                     <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4 space-y-3">

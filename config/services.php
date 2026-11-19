@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    // CRM (solo lectura): resumen de delivery por ejecutivo.
+    'crm' => [
+        'url' => env('CRM_API_URL', 'http://host.docker.internal:8080'),
+        'token' => env('CRM_API_TOKEN'),
+    ],
+
 ];

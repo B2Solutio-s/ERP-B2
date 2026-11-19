@@ -1,3 +1,4 @@
+@php($embebido = request()->boolean('embed'))
 <!DOCTYPE html>
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
     <head>
@@ -13,10 +14,15 @@
 
         <script>try { if (localStorage.getItem('sidebar-collapsed') === '1') document.documentElement.classList.add('sidebar-collapsed'); } catch (e) {}</script>
 
+        @if ($embebido)
+            <style>html, body { background: transparent !important; }</style>
+        @endif
+
         @livewireStyles
     </head>
-    <body class="bg-app">
+    <body class="{{ $embebido ? 'embebido' : 'bg-app' }}">
         <div class="flex h-screen overflow-hidden">
+            @unless ($embebido)
             <aside class="sidebar">
                 <div class="sidebar-brand">
                     <span class="sidebar-label">{{ config('app.name') }}</span>
@@ -78,6 +84,15 @@
                         </a>
                     @endif
 
+                    @if (auth()->user()->esAdmin() || auth()->user()->esGth())
+                        <a href="{{ route('delivery-ejecutivos') }}" title="Seguimiento de ejecutivos" class="sidebar-item {{ request()->routeIs('delivery-ejecutivos') ? 'sidebar-item-active' : '' }}">
+                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+                            </svg>
+                            <span class="sidebar-label">Seguimiento de ejecutivos</span>
+                        </a>
+                    @endif
+
                     @if (auth()->user()->esMkt() || auth()->user()->esAdmin())
                         <a href="{{ route('resultados-campana') }}" title="Resultados de campaña" class="sidebar-item {{ request()->routeIs('resultados-campana') ? 'sidebar-item-active' : '' }}">
                             <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16">
@@ -116,8 +131,10 @@
                     </a>
                 </div>
             </aside>
+            @endunless
 
             <div class="flex flex-1 flex-col overflow-hidden">
+                @unless ($embebido)
                 <header class="topbar shrink-0">
                     <div class="flex items-center gap-3">
                         <button type="button" data-sidebar-toggle class="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800" aria-label="Mostrar u ocultar el menú" title="Mostrar u ocultar el menú">
@@ -143,8 +160,9 @@
                         </form>
                     </div>
                 </header>
+                @endunless
 
-                <main class="flex-1 overflow-y-auto px-6 py-6">
+                <main class="flex-1 overflow-y-auto {{ $embebido ? '' : 'px-6 py-6' }}">
                     <div class="mx-auto max-w-7xl">
                         {{ $slot }}
                     </div>
@@ -152,13 +170,15 @@
             </div>
         </div>
 
-        @if (auth()->user()->esGth() || auth()->user()->esAdmin())
-            <livewire:panel.recordatorio-entrevistas />
-        @endif
+        @unless ($embebido)
+            @if (auth()->user()->esGth() || auth()->user()->esAdmin())
+                <livewire:panel.recordatorio-entrevistas />
+            @endif
 
-        @if (auth()->user()->esAdmin() || auth()->user()->esGth())
-            <livewire:panel.recordatorio-llamadas />
-        @endif
+            @if (auth()->user()->esAdmin() || auth()->user()->esGth())
+                <livewire:panel.recordatorio-llamadas />
+            @endif
+        @endunless
 
         @livewireScripts
     </body>

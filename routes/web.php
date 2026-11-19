@@ -52,6 +52,7 @@ Route::livewire('/panel/asistencia', 'panel.asistencia')->name('asistencia')->mi
 Route::livewire('/panel/asistencia-mensual', 'panel.asistencia-mensual')->name('asistencia-mensual')->middleware('auth');
 
 Route::livewire('/panel/vacaciones', 'panel.vacaciones')->name('vacaciones')->middleware('auth');
+Route::livewire('/panel/delivery-ejecutivos', 'panel.delivery-ejecutivos')->name('delivery-ejecutivos')->middleware('auth');
 
 Route::get('/panel/vacaciones/documentos/{vacacion}', function (Vacacion $vacacion) {
     abort_unless(Auth::user()->esAdmin() && $vacacion->documento_ruta, 403);
@@ -76,6 +77,12 @@ Route::get('/panel/registro-ingresos/documentos/{documento}', function (Candidat
 
     return Storage::disk('local')->response($documento->ruta, $documento->nombre_original);
 })->name('registro-ingresos.documento')->middleware('auth');
+
+Route::get('/panel/seguimiento/documentos/{registro}', function (App\Models\SeguimientoRegistro $registro) {
+    abort_unless(Auth::user()->esAdmin() || Auth::user()->esGth(), 403);
+
+    return Storage::disk('local')->response($registro->documento_ruta, $registro->documento_nombre);
+})->name('seguimiento.documento')->middleware('auth');
 
 Route::get('/panel/registro-ingresos/documentos-cese/{documento}', function (EmpleadoDocumentoCese $documento) {
     abort_unless(Auth::user()->esAdmin(), 403);

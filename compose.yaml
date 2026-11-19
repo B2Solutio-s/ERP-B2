@@ -53,6 +53,18 @@ services:
         depends_on:
             - mysql
             - reverb
+    programador:
+        image: 'sail-8.5/app'
+        entrypoint: []
+        command: php artisan schedule:work
+        user: sail
+        restart: unless-stopped
+        volumes:
+            - '.:/var/www/html'
+        networks:
+            - sail
+        depends_on:
+            - mysql
     cola:
         image: 'sail-8.5/app'
         entrypoint: []

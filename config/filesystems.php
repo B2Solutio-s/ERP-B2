@@ -33,6 +33,11 @@ return [
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
+            // La cola (contenedor aparte, otro uid pero mismo grupo) debe poder leer los adjuntos de los correos.
+            'permissions' => [
+                'file' => ['public' => 0664, 'private' => 0660],
+                'dir' => ['public' => 0775, 'private' => 0770],
+            ],
             'serve' => true,
             'throw' => false,
             'report' => false,

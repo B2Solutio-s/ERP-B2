@@ -78,3 +78,13 @@ document.addEventListener('focusout', (evento) => {
     clearTimeout(temporizadoresComentario.get(caja));
     guardarComentarioAsistencia(caja);
 });
+
+
+// Un módulo puede abrir «Datos de…» (Registro de ingresos) en un iframe; al cerrarlo avisa a la página que lo contiene.
+window.addEventListener('message', (evento) => {
+    if (evento.origin !== window.location.origin || evento.data?.tipo !== 'cerrar-datos-embebidos') {
+        return;
+    }
+
+    window.Livewire?.dispatch('cerrar-datos-embebidos');
+});
