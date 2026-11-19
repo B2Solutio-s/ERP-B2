@@ -22,6 +22,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
         'entrevista' => ['nombre' => 'Entrevista', 'fecha' => 'fecha_entrevista', 'asistio' => 'asistio_entrevista', 'fecha_rep' => 'fecha_reprogramada', 'asistio_rep' => 'asistio_entrevista_reprogramada'],
         'cap1' => ['nombre' => 'Capacitación 1', 'fecha' => 'capacitacion_1', 'asistio' => 'asistio_cap_1', 'fecha_rep' => 'capacitacion_1_reprogramada', 'asistio_rep' => 'asistio_cap_1_reprogramada'],
         'cap2' => ['nombre' => 'Capacitación 2', 'fecha' => 'capacitacion_2', 'asistio' => 'asistio_cap_2', 'fecha_rep' => 'capacitacion_2_reprogramada', 'asistio_rep' => 'asistio_cap_2_reprogramada'],
+        'ent2' => ['nombre' => '2.ª entrevista', 'fecha' => 'entrevista_2', 'asistio' => 'asistio_entrevista_2', 'fecha_rep' => 'entrevista_2_reprogramada', 'asistio_rep' => 'asistio_entrevista_2_reprogramada'],
     ];
 
     public const ESTADOS = [
@@ -40,7 +41,8 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
         'interesados' => 'Interesados y aptos al filtro',
         'aceptaron' => 'Aceptaron la entrevista',
         'asistio_entrevista' => 'Asistieron a la entrevista',
-        'asistio_cap' => 'Asistieron a capacitación',
+        'agendados_cap' => 'Agendados para capacitación / 2.ª entrevista',
+        'asistio_cap' => 'Asistieron a capacitación / 2.ª entrevista',
         'aptos' => 'Aptos para ingresar',
     ];
 
@@ -75,7 +77,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
     {
         return CandidatoReclutamiento::query()
             ->whereBetween('fecha_gestion', [$rango[0]->toDateString(), $rango[1]->toDateString()])
-            ->get(['id', 'fecha_gestion', 'agente_reclutador', 'campana', 'puesto', 'tipificacion', 'subtipificacion_rechazo', 'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada', 'asistio_cap_1', 'asistio_cap_1_reprogramada', 'apto']);
+            ->get(['id', 'fecha_gestion', 'agente_reclutador', 'campana', 'puesto', 'tipificacion', 'subtipificacion_rechazo', 'aceptacion_entrevista', 'asistio_entrevista', 'asistio_entrevista_reprogramada', 'asistio_cap_1', 'asistio_cap_1_reprogramada', 'capacitacion_1', 'capacitacion_1_reprogramada', 'entrevista_2', 'entrevista_2_reprogramada', 'asistio_entrevista_2', 'asistio_entrevista_2_reprogramada', 'apto']);
     }
 
     /**
@@ -134,7 +136,10 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
             'interesados' => $interesado,
             'aceptaron' => $c->aceptacion_entrevista === 'SI',
             'asistio_entrevista' => $asistio($c->asistio_entrevista) || $asistio($c->asistio_entrevista_reprogramada),
-            'asistio_cap' => $asistio($c->asistio_cap_1) || $asistio($c->asistio_cap_1_reprogramada),
+            // Ejecutivos: capacitación 1 · demás puestos: 2.ª entrevista. Agendado = tiene fecha en ese primer paso (o su reprogramación).
+            'agendados_cap' => (bool) ($c->capacitacion_1 || $c->capacitacion_1_reprogramada || $c->entrevista_2 || $c->entrevista_2_reprogramada),
+            'asistio_cap' => $asistio($c->asistio_cap_1) || $asistio($c->asistio_cap_1_reprogramada)
+                || $asistio($c->asistio_entrevista_2) || $asistio($c->asistio_entrevista_2_reprogramada),
             'aptos' => $c->apto === true,
             default => false,
         };
@@ -176,6 +181,8 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                 'contactados' => $grupo->filter(fn ($c) => $this->cumplePaso('contactados', $c))->count(),
                 'interesados' => $grupo->filter(fn ($c) => $this->cumplePaso('interesados', $c))->count(),
                 'aceptaron' => $grupo->filter(fn ($c) => $this->cumplePaso('aceptaron', $c))->count(),
+                'agendados_cap' => $grupo->filter(fn ($c) => $this->cumplePaso('agendados_cap', $c))->count(),
+                'aptos' => $grupo->filter(fn ($c) => $this->cumplePaso('aptos', $c))->count(),
                 'tasa' => (int) round($grupo->filter(fn ($c) => $this->cumplePaso('interesados', $c))->count() / max($grupo->count(), 1) * 100),
             ])
             ->all();
@@ -189,7 +196,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
 
         foreach ($porReclutador as $nombre => $cantidad) {
             if (! $reclutadores->contains('nombre', $nombre)) {
-                $reclutadores->push(['nombre' => $nombre, 'gestionados' => 0, 'contactados' => 0, 'interesados' => 0, 'aceptaron' => 0, 'tasa' => 0, 'llamadas' => $cantidad]);
+                $reclutadores->push(['nombre' => $nombre, 'gestionados' => 0, 'contactados' => 0, 'interesados' => 0, 'aceptaron' => 0, 'agendados_cap' => 0, 'aptos' => 0, 'tasa' => 0, 'llamadas' => $cantidad]);
             }
         }
 
@@ -273,7 +280,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                     $q->orWhereBetween($columna, [$desde, $hasta]);
                 }
             })
-            ->get(array_merge(['id', 'nombres', 'apellidos', 'agente_reclutador', 'puesto', 'campana', 'hora_entrevista'], $columnas, collect(self::ACTIVIDADES)->flatMap(fn ($a) => [$a['asistio'], $a['asistio_rep']])->all()));
+            ->get(array_merge(['id', 'nombres', 'apellidos', 'agente_reclutador', 'puesto', 'campana', 'hora_entrevista', 'hora_entrevista_2'], $columnas, collect(self::ACTIVIDADES)->flatMap(fn ($a) => [$a['asistio'], $a['asistio_rep']])->all()));
 
         $citas = collect();
 
@@ -294,7 +301,11 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                         'nombre' => $candidato->nombreCorto(),
                         'detalle' => collect([$candidato->campana, $candidato->puesto])->first(fn ($v) => $v && ! in_array($v, ['-', 'NO APLICA'], true)),
                         'reclutador' => $candidato->agente_reclutador,
-                        'hora' => $clave === 'entrevista' && $candidato->hora_entrevista ? substr((string) $candidato->hora_entrevista, 0, 5) : null,
+                        'hora' => match ($clave) {
+                            'entrevista' => $candidato->hora_entrevista ? substr((string) $candidato->hora_entrevista, 0, 5) : null,
+                            'ent2' => $candidato->hora_entrevista_2 ? substr((string) $candidato->hora_entrevista_2, 0, 5) : null,
+                            default => null,
+                        },
                         'reprogramada' => $reprogramada,
                     ]);
                 }
@@ -343,7 +354,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
         $aceptaron = $candidatos->where('aceptacion_entrevista', 'SI')->countBy(fn ($c) => $clave($c->fecha_gestion));
         $asistieron = fn (array $actividades) => $citas->whereIn('actividad', $actividades)->whereIn('estado', ['asistio', 'no_apto'])->countBy(fn ($c) => $clave($c['fecha']));
         $entrevista = $asistieron(['entrevista']);
-        $capacitacion = $asistieron(['cap1', 'cap2']);
+        $capacitacion = $asistieron(['cap1', 'cap2', 'ent2']);
 
         $gestion = [];
         $asistencia = [];
@@ -639,7 +650,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                                 <th class="text-right">Gestionados</th>
                                 <th class="text-right">% del total</th>
                                 <th class="text-right" title="Llamadas registradas en el período (una persona puede sumar varias)">Gestiones</th>
-                                @foreach (['contactados', 'interesados', 'aceptaron', 'asistio_entrevista', 'asistio_cap', 'aptos'] as $columna)
+                                @foreach (['contactados', 'interesados', 'aceptaron', 'asistio_entrevista', 'agendados_cap', 'asistio_cap', 'aptos'] as $columna)
                                     <th class="text-right">{{ self::PASOS[$columna] }}</th>
                                 @endforeach
                                 <th class="text-right">% interés</th>
@@ -657,7 +668,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                                     @endforeach
                                     <td class="text-right text-slate-500">{{ (int) round($fila['gestionados'] / max($ges['total'], 1) * 100) }}%</td>
                                     <td class="text-right"><button type="button" wire:click="abrirDetalle({{ \Illuminate\Support\Js::from('llam|camp|'.$fila['nombre']) }})" class="gth-click-numero" title="Ver las llamadas">{{ $fila['llamadas'] }}</button></td>
-                                    @foreach (['contactados', 'interesados', 'aceptaron', 'asistio_entrevista', 'asistio_cap', 'aptos'] as $columna)
+                                    @foreach (['contactados', 'interesados', 'aceptaron', 'asistio_entrevista', 'agendados_cap', 'asistio_cap', 'aptos'] as $columna)
                                         <td class="text-right"><button type="button" wire:click="abrirDetalle({{ \Illuminate\Support\Js::from('camp|'.$fila['nombre'].'|'.$columna) }})" class="gth-click-numero" title="Ver los registros">{{ $fila[$columna] }}</button></td>
                                     @endforeach
                                     <td class="text-right font-semibold">{{ $fila['tasa'] }}%</td>
@@ -670,7 +681,7 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                                 <td class="px-3 py-1.5 text-right"><button type="button" wire:click="abrirDetalle('paso|gestionados')" class="gth-click-numero">{{ $ges['total'] }}</button></td>
                                 <td class="px-3 py-1.5 text-right text-slate-500">100%</td>
                                 <td class="px-3 py-1.5 text-right"><button type="button" wire:click="abrirDetalle('llam|todas')" class="gth-click-numero">{{ $ges['totalLlamadas'] }}</button></td>
-                                @foreach ([1, 2, 3, 4, 5, 6] as $indice)
+                                @foreach ([1, 2, 3, 4, 5, 6, 7] as $indice)
                                     <td class="px-3 py-1.5 text-right"><button type="button" wire:click="abrirDetalle('paso|{{ $ges['pasos'][$indice]['clave'] }}')" class="gth-click-numero">{{ $ges['pasos'][$indice]['cantidad'] }}</button></td>
                                 @endforeach
                                 <td class="px-3 py-1.5 text-right">{{ (int) round($ges['pasos'][2]['cantidad'] / max($ges['total'], 1) * 100) }}%</td>
@@ -694,13 +705,13 @@ new #[Layout('layouts.panel', ['title' => 'Control GTH'])] class extends Compone
                     <div class="overflow-x-auto">
                         <table class="data-table">
                             <thead>
-                                <tr><th>Reclutador</th><th class="text-right">Gestionados</th><th class="text-right" title="Llamadas registradas por la persona en el período">Gestiones</th><th class="text-right">Contactados</th><th class="text-right">Interesados</th><th class="text-right">Aceptaron entrevista</th><th class="text-right">% interés</th></tr>
+                                <tr><th>Reclutador</th><th class="text-right">Gestionados</th><th class="text-right" title="Llamadas registradas por la persona en el período">Gestiones</th><th class="text-right">Contactados</th><th class="text-right">Interesados</th><th class="text-right">Aceptaron entrevista</th><th class="text-right" title="Candidatos con fecha en capacitación 1 (ejecutivos) o en la 2.ª entrevista (demás puestos)">Agendados cap. / 2.ª entrev.</th><th class="text-right" title="Candidatos marcados aptos para ingresar">Seleccionados (aptos)</th><th class="text-right">% interés</th></tr>
                             </thead>
                             <tbody>
                                 @foreach ($ges['reclutadores'] as $fila)
                                     <tr wire:key="reclutador-{{ $loop->index }}">
                                         <td class="font-medium">{{ $fila['nombre'] }}</td>
-                                        @foreach (['gestionados', 'llamadas', 'contactados', 'interesados', 'aceptaron'] as $columna)
+                                        @foreach (['gestionados', 'llamadas', 'contactados', 'interesados', 'aceptaron', 'agendados_cap', 'aptos'] as $columna)
                                             <td class="text-right">
                                                 @if ($columna === 'llamadas')
                                                     <button type="button" wire:click="abrirDetalle({{ \Illuminate\Support\Js::from('llam|rec|'.$fila['nombre']) }})" class="gth-click-numero" title="Ver las llamadas">{{ $fila[$columna] }}</button>
