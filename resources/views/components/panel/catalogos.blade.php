@@ -95,6 +95,19 @@ new #[Layout('layouts.panel', ['title' => 'Catálogos'])] class extends Componen
         $this->reset(['nuevoPuestoNombre']);
     }
 
+    /** Recorrido tras la entrevista 1: 'capacitacion' (capacitación 1 y 2) o 'entrevista_2' (2.ª entrevista). */
+    public function cambiarRecorridoPuesto(int $id, string $recorrido): void
+    {
+        abort_unless(Auth::user()->esAdmin(), 403);
+
+        if (! in_array($recorrido, ['capacitacion', 'entrevista_2'], true)) {
+            return;
+        }
+
+        Puesto::findOrFail($id)->update(['recorrido' => $recorrido]);
+        \App\Services\ProcesoCapacitacion::olvidarCache();
+    }
+
     public function alternarCampanaPuesto(int $id): void
     {
         $puesto = Puesto::findOrFail($id);
@@ -299,6 +312,10 @@ new #[Layout('layouts.panel', ['title' => 'Catálogos'])] class extends Componen
                                     Usa campaña
                                 </label>
                             @endif
+                            <select wire:change="cambiarRecorridoPuesto({{ $puesto->id }}, $event.target.value)" class="ml-2 rounded-md border-slate-200 py-0.5 pl-2 pr-6 text-xs text-slate-600" title="Qué sigue después de la entrevista 1 para este puesto" aria-label="Recorrido de {{ $puesto->nombre }}">
+                                <option value="capacitacion" @selected($puesto->recorrido === 'capacitacion')>Capacitación 1 y 2</option>
+                                <option value="entrevista_2" @selected($puesto->recorrido === 'entrevista_2')>2.ª entrevista</option>
+                            </select>
                             <button type="button" wire:click="editarPuesto({{ $puesto->id }})" class="ml-2 font-medium text-slate-500 hover:opacity-80">
                                 Editar
                             </button>

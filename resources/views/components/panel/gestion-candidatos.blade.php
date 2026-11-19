@@ -773,6 +773,7 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                 'capacitacion' => collect([
                     ['Capacitación 1', $actual->capacitacion_1, $actual->asistio_cap_1, $actual->capacitacion_1_reprogramada, $actual->asistio_cap_1_reprogramada],
                     ['Capacitación 2', $actual->capacitacion_2, $actual->asistio_cap_2, $actual->capacitacion_2_reprogramada, $actual->asistio_cap_2_reprogramada],
+                    ['2.ª entrevista', $actual->entrevista_2, $actual->asistio_entrevista_2, $actual->entrevista_2_reprogramada, $actual->asistio_entrevista_2_reprogramada],
                 ])->filter(fn ($fila) => $fila[1] || $fila[2])->all(),
                 'apto' => (bool) $actual->apto,
             ] : null,
@@ -977,8 +978,8 @@ new #[Layout('layouts.panel', ['title' => 'Gestión de candidatos'])] class exte
                 <div class="gc-drawer-body gc-form">
                     @if ($ac && $ac['graduado'])
                         <div class="gc-aviso bg-indigo-50 text-indigo-800">
-                            <p class="font-semibold">Este candidato ya pasó a capacitación.</p>
-                            <p class="mt-0.5">Su gestión de llamada y entrevista ya no se edita aquí.</p>
+                            <p class="font-semibold">Este candidato ya pasó a capacitación o a su 2.ª entrevista.</p>
+                            <p class="mt-0.5">Su gestión de llamada y entrevista 1 ya no se edita aquí: continúa en <a href="{{ route('proceso-capacitacion', ['abrir' => $candidatoId]) }}" class="font-semibold underline">Proceso de capacitación</a>.</p>
                             @if (! empty($ac['capacitacion']))
                                 <ul class="mt-2 space-y-0.5 text-xs">
                                     @foreach ($ac['capacitacion'] as [$nombre, $fecha, $asistio, $fechaRep, $asistioRep])

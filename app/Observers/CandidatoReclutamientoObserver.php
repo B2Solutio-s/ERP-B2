@@ -45,6 +45,11 @@ class CandidatoReclutamientoObserver
         'asistio_cap_2' => 'Asistió a capacitación 2',
         'capacitacion_2_reprogramada' => 'Capacitación 2 reprogramada',
         'asistio_cap_2_reprogramada' => 'Asistió a capacitación 2 (reprog.)',
+        'entrevista_2' => 'Fecha de 2.ª entrevista',
+        'hora_entrevista_2' => 'Hora de 2.ª entrevista',
+        'asistio_entrevista_2' => 'Asistió a la 2.ª entrevista',
+        'entrevista_2_reprogramada' => '2.ª entrevista reprogramada',
+        'asistio_entrevista_2_reprogramada' => 'Asistió a la 2.ª entrevista (reprog.)',
         'apto' => 'Apto',
         'fecha_ingreso' => 'Fecha de ingreso',
     ];

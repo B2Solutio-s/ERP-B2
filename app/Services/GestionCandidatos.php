@@ -87,7 +87,7 @@ class GestionCandidatos
     public const ETAPAS = [
         'gestion' => 'Gestión',
         'entrevista' => 'Entrevista',
-        'capacitacion' => 'Capacitación',
+        'capacitacion' => 'Capacitación / 2.ª entrev.',
         'apto' => 'Aptos',
         'no_continua' => 'No continúan',
     ];

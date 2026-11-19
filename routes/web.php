@@ -44,6 +44,7 @@ Route::livewire('/panel/control-gth', 'panel.control-gth')->name('control-gth')-
 Route::livewire('/panel/control-ingresos', 'panel.control-ingresos')->name('control-ingresos')->middleware('auth');
 
 Route::livewire('/panel/gestion-candidatos', 'panel.gestion-candidatos')->name('gestion-candidatos')->middleware('auth');
+Route::livewire('/panel/proceso-capacitacion', 'panel.proceso-capacitacion')->name('proceso-capacitacion')->middleware('auth');
 
 Route::livewire('/panel/catalogos', 'panel.catalogos')->name('catalogos')->middleware('auth');
 

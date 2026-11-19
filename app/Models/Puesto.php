@@ -11,6 +11,7 @@ class Puesto extends Model
         'area_id',
         'tipo_contrato',
         'usa_campana',
+        'recorrido',
     ];
 
     protected function casts(): array

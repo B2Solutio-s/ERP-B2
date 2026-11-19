@@ -20,6 +20,8 @@ class CandidatoReclutamiento extends Model
         'capacitacion_1_reprogramada',
         'capacitacion_2',
         'capacitacion_2_reprogramada',
+        'entrevista_2',
+        'entrevista_2_reprogramada',
         'fecha_ingreso',
         'volver_a_llamar_fecha',
     ];
@@ -73,6 +75,13 @@ class CandidatoReclutamiento extends Model
         'capacitacion_2_reprogramada',
         'asistio_cap_2_reprogramada',
         'obs_2_reprogramada',
+        'entrevista_2',
+        'hora_entrevista_2',
+        'asistio_entrevista_2',
+        'obs_entrevista_2',
+        'entrevista_2_reprogramada',
+        'asistio_entrevista_2_reprogramada',
+        'obs_entrevista_2_reprogramada',
         'apto',
         'fecha_apto',
         'fecha_ingreso',
@@ -94,6 +103,8 @@ class CandidatoReclutamiento extends Model
         'capacitacion_1_reprogramada' => 'date',
         'capacitacion_2' => 'date',
         'capacitacion_2_reprogramada' => 'date',
+        'entrevista_2' => 'date',
+        'entrevista_2_reprogramada' => 'date',
         'fecha_ingreso' => 'date',
         'apto' => 'boolean',
         'periodos_iniciales' => 'array',
@@ -130,6 +141,14 @@ class CandidatoReclutamiento extends Model
 
     public function detalleNoAptoCapacitacion(): ?string
     {
+        if ($this->asistio_entrevista_2_reprogramada === 'SI, NO APTO') {
+            return '2.ª entrevista (reprogramada): '.($this->obs_entrevista_2_reprogramada ?: 'sin observación');
+        }
+
+        if ($this->asistio_entrevista_2 === 'SI, NO APTO') {
+            return '2.ª entrevista: '.($this->obs_entrevista_2 ?: 'sin observación');
+        }
+
         if ($this->asistio_cap_2_reprogramada === 'SI, NO APTO') {
             return 'Capacitación 2 (reprogramada): '.($this->obs_2_reprogramada ?: 'sin observación');
         }
@@ -164,6 +183,7 @@ class CandidatoReclutamiento extends Model
         $etapas = [
             'Capacitación 2' => [$this->asistio_cap_2, $this->asistio_cap_2_reprogramada],
             'Capacitación 1' => [$this->asistio_cap_1, $this->asistio_cap_1_reprogramada],
+            '2.ª entrevista' => [$this->asistio_entrevista_2, $this->asistio_entrevista_2_reprogramada],
             'Entrevista' => [$this->asistio_entrevista, $this->asistio_entrevista_reprogramada],
         ];
 
