@@ -36,3 +36,7 @@ Thumbs.db
 *.key
 id_rsa*
 id_ed25519*
+
+# Imágenes sueltas de la raíz: se quedan en la carpeta, no se suben
+/rrhh (2).png
+/logo svg b2 blanco.svg

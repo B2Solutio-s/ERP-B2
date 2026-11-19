@@ -57,5 +57,5 @@ Al terminar: `curl -s -o /dev/null -w "%{http_code}" http://localhost:8070/login
 
 ## 7. Git
 - Haz commit solo cuando el usuario lo pida. Mensajes en inglés, estilo de los commits recientes (`git log --oneline`).
-- No subas las imágenes sueltas de la raíz (`*.png`, `*.svg`) ni archivos con datos personales (`/*.xlsx`, `.docx`, `.pdf`).
+- Las imágenes sueltas de la raíz (`rrhh (2).png`, `logo svg b2 blanco.svg`) están en `.gitignore` a propósito: no las toques ni las subas. Tampoco subas archivos con datos personales (`/*.xlsx`, `.docx`, `.pdf`). Si `git status` muestra algo sin seguimiento que no creaste tú, ignóralo y avisa; no es motivo para detenerte.
 - **Un solo agente editando a la vez.** Antes de cambiar de herramienta deja el árbol limpio con un commit, y trabaja en una rama (`git switch -c nombre`) para poder comparar con `git diff` y deshacer.
